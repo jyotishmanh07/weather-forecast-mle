@@ -1,0 +1,15 @@
+zenml==0.61.0
+mlflow>=2.11.0
+transformers>=4.38.2
+datasets
+torch
+newsapi-python
+evidently
+scikit-learn
+pytest
+deepchecks
+
+streamlit
+pandas
+numpy
+python-dotenv
