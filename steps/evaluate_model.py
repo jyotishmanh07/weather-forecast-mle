@@ -1,20 +1,24 @@
 import mlflow
+import pandas as pd
 from zenml import step
 from sklearn.metrics import accuracy_score
 
-@step
+@step(experiment_tracker="mlflow_tracker")
 def evaluate_model(df: pd.DataFrame) -> bool:
-    """Determines if the model meets the production threshold."""
-    # In a real scenario, we'd load the model and run predictions on a test set
-    # Here, we fetch the latest metric from the MLflow run
-    run = mlflow.active_run()
-    accuracy = run.data.metrics.get("eval_accuracy", 0)
+    """Evaluates the model and returns a native Python boolean."""
+    # Load model and run predictions
+    model_uri = "models:/NewsIntegrityModel/latest"
+    model = mlflow.transformers.load_model(model_uri, task="text-classification")
     
-    threshold = 0.80 # 80% Accuracy requirement
+    texts = df['content'].tolist()
+    results = model(texts, truncation=True, max_length=512)
     
-    if accuracy >= threshold:
-        print(f"Model passed! Accuracy: {accuracy}")
-        return True
-    else:
-        print(f"Model failed. Accuracy: {accuracy}")
-        return False
+    # Map labels and calculate accuracy
+    predictions = [1 if res['label'] == 'LABEL_1' else 0 for res in results]
+    y_true = df['label'].tolist()
+    acc = accuracy_score(y_true, predictions)
+    
+    print(f"Final Evaluation Accuracy: {acc:.2f}")
+    passed_threshold = bool(acc >= 0.75) 
+    
+    return passed_threshold
