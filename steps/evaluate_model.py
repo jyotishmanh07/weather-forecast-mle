@@ -2,18 +2,15 @@ import mlflow
 import pandas as pd
 from zenml import step
 from sklearn.metrics import accuracy_score
-from zenml.materializers.pandas_materializer import PandasMaterializer
 
 @step(experiment_tracker="mlflow_tracker", enable_cache=False)
-def evaluate_model(df: pd.DataFrame) -> bool: 
-    """Evaluates the model and returns a native Python boolean."""
+def evaluate_model(df: pd.DataFrame, model_uri: str) -> bool: # ADD 'model_uri' HERE 
+    """Evaluates the model instance created in the current run."""
     
-    # ZenML will now use PandasMaterializer to load 'df' correctly
     texts = df['content'].tolist()
     y_true = df['label'].tolist()
     
-    # Load model and run predictions
-    model_uri = "models:/NewsIntegrityModel/latest"
+    print(f"Evaluating model at: {model_uri}")
     model = mlflow.transformers.load_model(model_uri, task="text-classification")
     
     results = model(texts, truncation=True, max_length=512)

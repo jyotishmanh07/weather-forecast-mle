@@ -1,18 +1,28 @@
 import mlflow
 import pandas as pd
 from zenml import step
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
+from transformers import (
+    AutoTokenizer, 
+    AutoModelForSequenceClassification, 
+    Trainer, 
+    TrainingArguments
+)
 from datasets import Dataset
 
-@step(experiment_tracker="mlflow_tracker")
-def train_model(df: pd.DataFrame):
-    """Trains a DistilBERT model and logs to MLflow."""
-    mlflow.transformers.autolog() #logs huggingface metrics
-    
-    tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
-    model = AutoModelForSequenceClassification.from_pretrained("distilbert-base-uncased", num_labels=2)
+@step(experiment_tracker="mlflow_tracker", enable_cache=False)
+def train_model(df: pd.DataFrame) -> str:
+    """
+    Trains DistilBERT and returns the exact Model URI for the deployer.
+    """
+    # Setup Model and Tokenizer
+    model_name = "distilbert-base-uncased"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForSequenceClassification.from_pretrained(
+        model_name, 
+        num_labels=2
+    )
 
-    # Convert to huggingface format
+    # Prepare Dataset
     dataset = Dataset.from_pandas(df).map(
         lambda x: tokenizer(
             x['content'], 
@@ -22,22 +32,26 @@ def train_model(df: pd.DataFrame):
         ), 
         batched=True
     )
+    
+    # Training Arguments (CPU only for local testing, can use cuda too if available)
     training_args = TrainingArguments(
         output_dir="./results",
         num_train_epochs=1,
         per_device_train_batch_size=4, 
         eval_strategy="no",     
-        report_to="mlflow",
+        report_to="none", 
         use_cpu=True
     )
     
+    # train
     trainer = Trainer(model=model, args=training_args, train_dataset=dataset)
     trainer.train()
-    pip_requirements = ["torch==2.10.0", "transformers", "datasets", "pandas"]
-
-    mlflow.transformers.log_model(
+    
+    # Log Model for MLflow Deployer
+    model_info = mlflow.transformers.log_model(
         transformers_model={"model": model, "tokenizer": tokenizer},
-        name="news_model",
-        registered_model_name="NewsIntegrityModel",
-        pip_requirements=pip_requirements
+        artifact_path="model", 
+        task="text-classification"
     )
+    
+    return model_info.model_uri

@@ -4,7 +4,6 @@ import nltk
 from nltk.corpus import stopwords
 from zenml import step
 
-# Ensure NLTK data is available
 nltk.download('stopwords', quiet=True)
 
 @step
