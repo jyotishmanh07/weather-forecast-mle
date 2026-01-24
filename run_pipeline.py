@@ -1,10 +1,12 @@
-import os
-from pipeline.training_pipeline import news_integrity_training_pipeline
+from pipeline.deployment_pipeline import news_integrity_unified_pipeline
+from pipeline.inference_pipeline import news_integrity_inference_pipeline
+
+def main():
+    # To train and deploy:
+    #news_integrity_unified_pipeline()
+    
+    # To run batch inference:
+    news_integrity_inference_pipeline()
 
 if __name__ == "__main__":
-    # future use with APIs initially wanted to use newsapi 
-    NEWS_API_KEY = os.getenv("NEWS_API_KEY", "your_api_key_here")
- 
-    pipeline_run = news_integrity_training_pipeline()
-    
-    print("Pipeline run started successfully!")
+    main()
