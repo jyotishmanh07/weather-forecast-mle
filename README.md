@@ -18,7 +18,7 @@ The training pipeline automates the transformation of raw news data into a produ
 #### 2. Deployment Pipeline
 Unlike standard local deployments, TruthAnchor uses a **Custom Deployment Pattern** to ensure server stability.
 * **Deployment Gating**: The model is only deployed if it exceeds a 75% accuracy threshold on the validation set.
-* **Custom Model Server**: A background `uvicorn` process serves the model on port 8000 using the MLflow Transformers flavor.
+* **Custom Model Server**: A background `uvicorn` process serves the model on port 8000 using the MLflow Transformers.
 
 #### 3. Inference Pipeline
 A dedicated batch inference pipeline allows for large-scale classification.
