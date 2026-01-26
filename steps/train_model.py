@@ -14,7 +14,6 @@ def train_model(df: pd.DataFrame) -> str:
     """
     Trains DistilBERT and returns the exact Model URI for the deployer.
     """
-    # Setup Model and Tokenizer
     model_name = "distilbert-base-uncased"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSequenceClassification.from_pretrained(
@@ -22,7 +21,6 @@ def train_model(df: pd.DataFrame) -> str:
         num_labels=2
     )
 
-    # Prepare Dataset
     dataset = Dataset.from_pandas(df).map(
         lambda x: tokenizer(
             x['content'], 
@@ -33,24 +31,24 @@ def train_model(df: pd.DataFrame) -> str:
         batched=True
     )
     
-    # Training Arguments (CPU only for local testing, can use cuda too if available)
     training_args = TrainingArguments(
         output_dir="./results",
-        num_train_epochs=1,
+        num_train_epochs=3, 
         per_device_train_batch_size=4, 
         eval_strategy="no",     
-        report_to="none", 
-        use_cpu=True
+        report_to="mlflow", 
+        use_cpu=True,
+        logging_steps=5,        
+        logging_dir="./logs"
     )
     
-    # train
     trainer = Trainer(model=model, args=training_args, train_dataset=dataset)
+    
     trainer.train()
     
-    # Log Model for MLflow Deployer
     model_info = mlflow.transformers.log_model(
         transformers_model={"model": model, "tokenizer": tokenizer},
-        artifact_path="model", 
+        name="model", 
         task="text-classification"
     )
     
