@@ -25,3 +25,6 @@ A dedicated batch inference pipeline allows for large-scale classification.
 * **Dynamic Truncation**: Handles articles longer than the 512-token limit of BERT to prevent tensor size errors.
 * **Direct API Interaction**: The `predictor` step communicates directly with the live server via JSON payloads.
 
+
+#### TODO
+docker container, github actions, write tests
