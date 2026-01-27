@@ -22,7 +22,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Unit Tests
-        run: pytest tests/
+        run: python -m pytest tests/
 
       - name: Initialize ZenML and Run Pipeline
         run: |
