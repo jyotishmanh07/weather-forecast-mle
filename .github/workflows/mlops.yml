@@ -19,8 +19,12 @@ jobs:
           python-version: '3.9'
 
       - name: Install Dependencies
-        run: pip install -r requirements.txt
-
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          # Explicitly force the link between transformers and torch
+          pip install "transformers[torch]>=4.38.2" "accelerate>=0.26.0"
+          
       - name: Run Unit Tests
         run: python -m pytest tests/
 
