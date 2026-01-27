@@ -1,4 +1,4 @@
-name: TruthAnchor MLOps Pipeline
+name: TruthAnchor CI
 
 on:
   push:
@@ -7,31 +7,21 @@ on:
     branches: [ main ]
 
 jobs:
-  train-and-test:
+  test-logic:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.10'
 
       - name: Install Dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          # Explicitly force the link between transformers and torch
-          pip install "transformers[torch]>=4.38.2" "accelerate>=0.26.0"
-          
+
       - name: Run Unit Tests
         run: python -m pytest tests/
-
-      - name: Initialize ZenML and Run Pipeline
-        run: |
-          zenml init
-          # Register local stack components for the runner
-          zenml experiment-tracker register mlflow_tracker --flavor=mlflow
-          zenml stack register local_stack -o default -a default -e mlflow_tracker --set
-          python run_pipeline.py
