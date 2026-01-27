@@ -1,19 +1,16 @@
 import os
 import subprocess
 import time
+import requests
 from zenml import step
 
 @step(enable_cache=False)
 def custom_mlflow_deployer(model_uri: str, deploy_decision: bool):
-    """Manually triggers the MLflow serve process if evaluation passes."""
     if not deploy_decision:
         print("Deployment decision was False. Skipping deployment.")
         return
 
-    print(f"Deploying model from: {model_uri}")
-    
     port = 8000
-
     cmd = [
         "mlflow", "models", "serve",
         "-m", model_uri,
@@ -22,10 +19,18 @@ def custom_mlflow_deployer(model_uri: str, deploy_decision: bool):
         "--host", "127.0.0.1"
     ]
     
-    # Check if a server is already running on that port and kill it
     subprocess.run(["pkill", "-f", f"serve -m .* -p {port}"], stderr=subprocess.DEVNULL)
-    
-    # Start the new server
     subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
-    print(f"MLflow model server started at http://127.0.0.1:{port}")
+    print(f"Waiting for MLflow server to start at http://127.0.0.1:{port}...")
+    for _ in range(30): # Wait up to 30 seconds
+        try:
+            response = requests.get(f"http://127.0.0.1:{port}/health")
+            if response.status_code == 200:
+                print("Server is up and healthy!")
+                return
+        except:
+            pass
+        time.sleep(2)
+    
+    raise RuntimeError("MLflow server failed to start within 60 seconds.")
