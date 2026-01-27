@@ -10,10 +10,8 @@ def custom_mlflow_deployer(model_uri: str, deploy_decision: bool):
         print("Deployment decision was False. Skipping deployment.")
         return
 
-    # models:/m-1a3... -> maps to your mlruns folder
     print(f"Deploying model from: {model_uri}")
     
-    # Port to serve on
     port = 8000
 
     cmd = [
