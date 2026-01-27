@@ -5,6 +5,7 @@ transformers>=4.38.2
 accelerate>=0.26.0
 datasets
 torch
+torchvision
 nltk
 
 scikit-learn
