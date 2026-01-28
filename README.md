@@ -27,4 +27,8 @@ A dedicated batch inference pipeline allows for large-scale classification.
 
 
 #### TODO
-docker container, github actions, write tests
+Monitoring
+*detect performance degradtion, confidence score drops, prediction distribution, feedback loops
+*handle data drift
+
+
