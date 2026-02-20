@@ -22,10 +22,9 @@ def fetch_weather_data(config):
     """Fetches raw data from the API based on the 180-day window in your notebook."""
     hostname = config['data_ingestion']['hostname']
     conn = http.client.HTTPSConnection(hostname)
-    
-    # 180-day window logic from your notebook
+
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=180)
+    start_date = end_date - timedelta(days=360)
     
     LOGGER.info(f"Ingesting data from {start_date.date()} to {end_date.date()}")
     

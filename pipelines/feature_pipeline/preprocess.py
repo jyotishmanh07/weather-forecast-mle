@@ -17,21 +17,34 @@ LOGGER = logging.getLogger(__name__)
 RAW_DIR = Path("data/raw")
 PROCESSED_DIR = Path("data/processed")
 
+
+def add_time_series_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Advanced features: multi-day lags and volatility measures."""
+    df = df.sort_values(['city', 'time'])
+    
+    df['lag_temp_1d'] = df.groupby('city')['temperature_2m_max'].shift(1)
+    df['lag_temp_3d'] = df.groupby('city')['temperature_2m_max'].shift(3)
+    df['lag_temp_7d'] = df.groupby('city')['temperature_2m_max'].shift(7)
+    
+    group = df.groupby('city')['temperature_2m_max']
+
+    df['rolling_temp_7d_mean'] = group.transform(lambda x: x.rolling(7).mean().shift(1))
+    df['rolling_temp_7d_std'] = group.transform(lambda x: x.rolling(7).std().shift(1))
+
+    return df.fillna(0)
+
 def clean_weather_data(df: pd.DataFrame) -> pd.DataFrame:
     if 'time' not in df.columns:
-        df = df.reset_index()
-        if 'time' not in df.columns:
-            df.rename(columns={'index': 'time'}, inplace=True)
+        df = df.reset_index().rename(columns={'index': 'time'})
     
-    df['time'] = pd.to_datetime(df['time'], format='%Y-%m-%d')
-
+    df['time'] = pd.to_datetime(df['time'])
     df['month-day'] = df['time'].dt.strftime('%m.%d').astype(float)
-
+    
+    df = add_time_series_features(df)
+    
     df = df.dropna().drop_duplicates()
-
     df.set_index('time', inplace=True)
     df = df.sort_index()
-    
     return df
 
 def preprocess_splits(splits=("train", "eval", "holdout")):
