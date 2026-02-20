@@ -1,4 +1,6 @@
 # 🛡️ TruthAnchor
+
+Invalid :) swapping over to another problem set i.e. weather forecast as its much nicer to visualize that than fake news
 ## An NLP MLOps Pipeline for Fake News Detection
 Inspired by the [Are You A Cat?](https://github.com/MarinaWyss/are-you-a-cat) project.
 
