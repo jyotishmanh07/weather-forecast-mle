@@ -14,6 +14,7 @@ import logging
 from pathlib import Path
 from joblib import load
 
+# Import internal modules
 from pipelines.feature_pipeline.preprocess import clean_weather_data
 from pipelines.feature_pipeline.feature_engineering import validate_weather_data, encode_features
 
@@ -25,6 +26,7 @@ DEFAULT_MODEL = PROJECT_ROOT / "models" / "best_weather_xgb.pkl"
 DEFAULT_SCALER = PROJECT_ROOT / "models" / "tuned_scaler.pkl"
 TRAIN_FE_PATH = PROJECT_ROOT / "data" / "processed" / "train_encoded.csv"
 
+# Load the exact 15 features the model expects
 if TRAIN_FE_PATH.exists():
     _train_cols = pd.read_csv(TRAIN_FE_PATH, nrows=1)
     TRAIN_FEATURE_COLUMNS = [
@@ -41,22 +43,32 @@ def predict(
 ) -> pd.DataFrame:
     """Run full inference pipeline on raw weather data."""
 
+    # Standard cleaning (handles lags/rolling for cities)
     df = clean_weather_data(input_df.copy())
     
+    # 'clean_weather_data' sets 'time' as index. Because multiple cities share
+    # the same time, we must reset the index to avoid duplicate labels during reindex.
+    df = df.reset_index(drop=True)
+    
+    # Validation
     validate_weather_data(df, "Inference")
     
+    # Encoding (City One-Hot Encoding)
     df = encode_features(df)
     
+    # Capture actuals for the final output
     y_true = None
     if "temperature_2m_max" in df.columns:
         y_true = df["temperature_2m_max"].values
         df = df.drop(columns=["temperature_2m_max"])
 
+    # Feature Alignment (Forces exactly 15 columns in correct order)
     if TRAIN_FEATURE_COLUMNS is not None:
         df = df.reindex(columns=TRAIN_FEATURE_COLUMNS, fill_value=0)
     elif "time" in df.columns:
         df = df.drop(columns=["time"])
 
+    # Scaling
     if Path(scaler_path).exists():
         scaler = load(scaler_path)
         X_scaled = scaler.transform(df)
@@ -64,9 +76,11 @@ def predict(
         LOGGER.warning("Scaler not found. Proceeding without scaling.")
         X_scaled = df
 
+    # XGBoost Model Inference
     model = load(model_path)
     preds = model.predict(X_scaled)
 
+    # Formatting output for Streamlit/API
     out = input_df.copy()
     out["predicted_temp_max"] = preds
 
@@ -76,6 +90,7 @@ def predict(
     return out
 
 if __name__ == "__main__":
+    # Standard CLI runner logic
     parser = argparse.ArgumentParser(description="Run inference on new weather data.")
     parser.add_argument("--input", type=str, required=True, help="Path to raw weather CSV")
     parser.add_argument("--output", type=str, default="predictions.csv", help="Output path")
