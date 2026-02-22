@@ -1,36 +1,33 @@
-# 🛡️ TruthAnchor
-
-Invalid :) swapping over to another problem set i.e. weather forecast as its much nicer to visualize that than fake news
-## An NLP MLOps Pipeline for Fake News Detection
-Inspired by the [Are You A Cat?](https://github.com/MarinaWyss/are-you-a-cat) project.
+# Weather Forecast Machine Learning Engineering
 
 ### Problem Statement
-The primary objective of TruthAnchor was not to produce a novel machine learning architecture, but to master the Full MLOps Development Lifecycle. This project successfully demonstrates practices such as standardizing the transition from local code to automated pipelines, implementing Custom Deployment Patterns to solve real-world environment bugs, and maintaining a clear audit trail of experiments, models, and batch inference results using ZenML and MLflow.
+Weather forecast MLE is an end-to-end machine learning pipeline that predicts weather conditions using XGBoost. The project follows ML engineering best practices by utilizing modular pipelines, comprehensive testing, and automated experiment tracking.
 
-### The Solution
-This project utilizes [ZenML](https://zenml.io/home) to orchestrate the machine learning lifecycle and [MLflow](https://mlflow.org/) for experiment tracking and model serving.
+### Technology Stack
 
-#### 1. Training Pipeline
-The training pipeline automates the transformation of raw news data into a production-ready model.
-* **Data Ingestion**: Leverages the `datasets` library to pull from the `Pulk17/Fake-News-Detection-dataset`.
-* **Preprocessing**: Cleans text and handles basic normalization.
-* **Model Training**: Fine-tunes a `distilbert-base-uncased` model for sequence classification.
-* **Experiment Tracking**: Every run logs accuracy (hitting ~95%), loss, and model artifacts to a local MLflow tracking server.
+#### Machine Learning
 
-#### 2. Deployment Pipeline
-Unlike standard local deployments, TruthAnchor uses a **Custom Deployment Pattern** to ensure server stability.
-* **Deployment Gating**: The model is only deployed if it exceeds a 75% accuracy threshold on the validation set.
-* **Custom Model Server**: A background `uvicorn` process serves the model on port 8000 using the MLflow Transformers.
+* XGBoost for regression.
+* MLflow for experiment tracking.
+* Optuna for hyperparameter tuning.
+  
+#### Data Processing and Analytics
+* Pandas & NumPy for data manipulation and numerical computing.
+* Scikit-learn for data preprocessing.
+* Pytest for unit testing
 
-#### 3. Inference Pipeline
-A dedicated batch inference pipeline allows for large-scale classification.
-* **Dynamic Truncation**: Handles articles longer than the 512-token limit of BERT to prevent tensor size errors.
-* **Direct API Interaction**: The `predictor` step communicates directly with the live server via JSON payloads.
+#### API and Dashboard
+* Streamlit for interactive user interface.
+* Plotly for data visualizations.
+* FastAPI for REST endpoints.
 
 
-#### TODO
-Monitoring
-*detect performance degradtion, confidence score drops, prediction distribution, feedback loops
-*handle data drift
+#### Cloud and Devops
+* AWS for using S3, ECS Fargate, ECR, and ALB.
+* Docker for containerization.
+* GitHub Actions to manage the CI/CD pipeline for automated deployment.
+
+![ML Engineering Pipeline](mle_flowchart.png)
+
 
 
