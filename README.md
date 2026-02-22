@@ -27,6 +27,7 @@ Weather forecast MLE is an end-to-end machine learning pipeline that predicts we
 * Docker for containerization.
 * GitHub Actions to manage the CI/CD pipeline for automated deployment.
 
+#### ML Engineering Pipeline
 ![ML Engineering Pipeline](mle_flowchart.png)
 
 
