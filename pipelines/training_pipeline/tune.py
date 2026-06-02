@@ -1,13 +1,15 @@
 from __future__ import annotations
 import logging
+import os
 import joblib
 import mlflow
+import mlflow.xgboost
 import optuna
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from xgboost import XGBRegressor
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -15,6 +17,7 @@ LOGGER = logging.getLogger(__name__)
 
 PROCESSED_DIR = Path("data/processed")
 MODELS_DIR = Path("models")
+REGISTRY_MODEL_NAME = os.getenv("MLFLOW_MODEL_NAME", "weather-xgb")
 
 def _load_and_prepare(train_path, eval_path, target='temperature_2m_max'):
     train_df = pd.read_csv(train_path, index_col="time", parse_dates=True)
@@ -73,15 +76,48 @@ def tune_weather_model(n_trials: int = 30):
     study = optuna.create_study(direction="minimize")
     study.optimize(objective, n_trials=n_trials)
 
-    # Retrain final best model
-    with mlflow.start_run(run_name="best_xgb_with_lags"):
-        best_model = XGBRegressor(**study.best_params)
+    # Retrain final best model and register in MLflow Model Registry
+    with mlflow.start_run(run_name="best_xgb_with_lags") as run:
+        best_model = XGBRegressor(**study.best_params, tree_method="hist")
         best_model.fit(X_train_scaled, y_train)
-        
+
+        preds = best_model.predict(X_eval_scaled)
+        final_metrics = {
+            "mae": mean_absolute_error(y_eval, preds),
+            "rmse": np.sqrt(mean_squared_error(y_eval, preds)),
+            "r2": r2_score(y_eval, preds),
+        }
+        mlflow.log_params({**study.best_params, "n_trials": n_trials})
+        mlflow.log_metrics(final_metrics)
+
+        # Save locally (dev fallback)
+        MODELS_DIR.mkdir(parents=True, exist_ok=True)
         joblib.dump(best_model, MODELS_DIR / "best_weather_xgb.pkl")
         joblib.dump(scaler, MODELS_DIR / "tuned_scaler.pkl")
-        
-        LOGGER.info(f"Tuning Complete. Best MAE: {study.best_value:.4f}")
+
+        # Log model + scaler as MLflow artifacts
+        mlflow.xgboost.log_model(best_model, artifact_path="model")
+        mlflow.log_artifact(str(MODELS_DIR / "tuned_scaler.pkl"))
+
+        # Register and transition to Staging
+        model_uri = f"runs:/{run.info.run_id}/model"
+        mv = mlflow.register_model(model_uri, REGISTRY_MODEL_NAME)
+        client = mlflow.tracking.MlflowClient()
+        client.transition_model_version_stage(
+            name=REGISTRY_MODEL_NAME,
+            version=mv.version,
+            stage="Staging",
+        )
+
+        LOGGER.info(
+            f"Registered {REGISTRY_MODEL_NAME} v{mv.version} → Staging  "
+            f"(MAE: {final_metrics['mae']:.4f}  RMSE: {final_metrics['rmse']:.4f}  "
+            f"R²: {final_metrics['r2']:.4f})"
+        )
 
 if __name__ == "__main__":
-    tune_weather_model()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--n-trials", type=int, default=30)
+    args = parser.parse_args()
+    tune_weather_model(n_trials=args.n_trials)

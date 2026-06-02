@@ -1,11 +1,11 @@
 import pandas as pd
 from zenml import step
-from datasets import load_dataset
+from pipelines.feature_pipeline.load import load_config, fetch_weather_data
+
 
 @step
-def ingest_data() -> pd.DataFrame:
-    # Load only 500 rows for development
-    raw_data = load_dataset("Pulk17/Fake-News-Detection-dataset", split='train[:500]')
-    df = pd.DataFrame(raw_data)
-    df = df.rename(columns={'text': 'content'})
-    return df[['content', 'label']].dropna()
+def ingest_weather_data() -> pd.DataFrame:
+    """Fetches 360 days of weather data for all configured cities from Open-Meteo."""
+    config = load_config()
+    raw_df, _ = fetch_weather_data(config)
+    return raw_df

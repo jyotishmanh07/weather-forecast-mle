@@ -1,36 +1,44 @@
-import os
+import logging
 import subprocess
 import time
 import requests
 from zenml import step
 
+LOGGER = logging.getLogger(__name__)
+
+
 @step(enable_cache=False)
-def custom_mlflow_deployer(model_uri: str, deploy_decision: bool):
+def deploy_weather_api(deploy_decision: bool, port: int = 8000):
+    """Starts the FastAPI weather service if deploy_decision is True.
+
+    Kills any existing process on the target port, launches uvicorn in the
+    background, then polls /health until the server is ready (up to 30 s).
+    Raises RuntimeError if the server does not come up in time.
+    """
     if not deploy_decision:
-        print("Deployment decision was False. Skipping deployment.")
+        LOGGER.info("Deploy decision is False — skipping deployment.")
         return
 
-    port = 8000
-    cmd = [
-        "mlflow", "models", "serve",
-        "-m", model_uri,
-        "-p", str(port),
-        "--no-conda",
-        "--host", "127.0.0.1"
-    ]
-    
-    subprocess.run(["pkill", "-f", f"serve -m .* -p {port}"], stderr=subprocess.DEVNULL)
-    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    
-    print(f"Waiting for MLflow server to start at http://127.0.0.1:{port}...")
-    for _ in range(30): # Wait up to 30 seconds
+    subprocess.run(
+        ["pkill", "-f", f"uvicorn main:app.*--port {port}"],
+        stderr=subprocess.DEVNULL,
+    )
+
+    subprocess.Popen(
+        ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", str(port)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    LOGGER.info(f"Waiting for weather API on http://0.0.0.0:{port} ...")
+    for _ in range(15):
         try:
-            response = requests.get(f"http://127.0.0.1:{port}/health")
-            if response.status_code == 200:
-                print("Server is up and healthy!")
+            resp = requests.get(f"http://127.0.0.1:{port}/health", timeout=2)
+            if resp.status_code == 200:
+                LOGGER.info("Weather API is healthy.")
                 return
-        except:
+        except requests.exceptions.ConnectionError:
             pass
         time.sleep(2)
-    
-    raise RuntimeError("MLflow server failed to start within 60 seconds.")
+
+    raise RuntimeError(f"Weather API did not start within 30 s on port {port}.")

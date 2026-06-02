@@ -1,10 +1,27 @@
 import pandas as pd
-from sklearn.model_selection import train_test_split
 from zenml import step
+from datetime import datetime, timedelta
+
 
 @step
-def data_splitter(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
-    
-    print(f"Data split successful: {len(train_df)} training samples, {len(test_df)} test samples.")
-    return train_df, test_df
+def split_weather_data(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Splits raw weather data chronologically to avoid look-ahead bias.
+
+    Returns train, eval, holdout DataFrames using fixed time offsets from now:
+    - holdout: last 5 days
+    - eval:    days 6–10 from the end
+    - train:   everything before eval
+    """
+    df = df.copy()
+    df["time"] = pd.to_datetime(df["time"])
+    df = df.sort_values(by=["city", "time"])
+
+    end_date = datetime.now()
+    cutoff_eval = end_date - timedelta(days=10)
+    cutoff_holdout = end_date - timedelta(days=5)
+
+    train_df = df[df["time"] < cutoff_eval].reset_index(drop=True)
+    eval_df = df[(df["time"] >= cutoff_eval) & (df["time"] < cutoff_holdout)].reset_index(drop=True)
+    holdout_df = df[df["time"] >= cutoff_holdout].reset_index(drop=True)
+
+    return train_df, eval_df, holdout_df

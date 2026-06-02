@@ -1,50 +1,51 @@
-import mlflow
+import logging
+import joblib
+import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+from pathlib import Path
 from zenml import step
-from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
-@step(experiment_tracker="mlflow_tracker", enable_cache=False)
-def evaluate_model(df: pd.DataFrame, model_uri: str) -> bool: 
+LOGGER = logging.getLogger(__name__)
+
+TARGET = "temperature_2m_max"
+
+
+@step
+def evaluate_weather_model(
+    eval_df: pd.DataFrame,
+    model_path: str = "models/best_weather_xgb.pkl",
+    scaler_path: str = "models/tuned_scaler.pkl",
+    mae_threshold: float = 3.0,
+) -> bool:
+    """Evaluates the trained XGBoost model on the eval split.
+
+    Logs MAE, RMSE, and R² to stdout. Returns True if MAE is within
+    mae_threshold — this boolean gates the deployment step.
     """
-    Evaluates the model and logs deep insights (Confusion Matrix & Error Table) to MLflow.
-    """
-    
-    texts = df['content'].tolist()
-    y_true = df['label'].tolist()
-    
-    print(f"Evaluating model at: {model_uri}")
-    # Load the model using MLflow's transformers flavor
-    model = mlflow.transformers.load_model(model_uri, task="text-classification")
-    
-    # Run inference with truncation to prevent tensor size errors
-    results = model(texts, truncation=True, max_length=512)
-    predictions = [1 if res['label'] == 'LABEL_1' else 0 for res in results]
-    
-    # Calculate base accuracy
-    acc = accuracy_score(y_true, predictions)
-    print(f"Final Evaluation Accuracy: {acc:.2f}")
+    model_file = Path(model_path)
+    scaler_file = Path(scaler_path)
 
-    mlflow.log_metric("accuracy", acc)
+    if not model_file.exists() or not scaler_file.exists():
+        raise FileNotFoundError(f"Artifacts not found: {model_path}, {scaler_path}")
 
-    cm = confusion_matrix(y_true, predictions)
-    fig, ax = plt.subplots(figsize=(6, 6))
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["Fake", "Real"])
-    disp.plot(ax=ax, cmap="Blues")
-    plt.title(f"Confusion Matrix (Acc: {acc:.2f})")
-    
+    model = joblib.load(model_file)
+    scaler = joblib.load(scaler_file)
 
-    mlflow.log_figure(fig, "plots/confusion_matrix.png")
+    df = eval_df.copy()
+    if "time" in df.columns:
+        df = df.drop(columns=["time"])
 
-    df_results = df.copy()
-    df_results['predicted'] = predictions
-    df_results['actual'] = y_true
-    
-    errors = df_results[df_results['predicted'] != df_results['actual']]
-    
-    if not errors.empty:
-        mlflow.log_table(data=errors.head(20), artifact_file="debug/misclassified_samples.json")
-    
-    mlflow.log_text(f"Total samples: {len(df)} | Accuracy: {acc}", "summary.txt")
+    y_true = df[TARGET].values
+    X = df.drop(columns=[TARGET])
+    X_scaled = scaler.transform(X)
 
-    return bool(acc >= 0.75)
+    preds = model.predict(X_scaled)
+    mae = mean_absolute_error(y_true, preds)
+    rmse = np.sqrt(mean_squared_error(y_true, preds))
+    r2 = r2_score(y_true, preds)
+
+    LOGGER.info(f"Eval metrics — MAE: {mae:.4f}  RMSE: {rmse:.4f}  R²: {r2:.4f}")
+    LOGGER.info(f"Deploy decision: MAE {mae:.4f} {'<=' if mae <= mae_threshold else '>'} threshold {mae_threshold}")
+
+    return bool(mae <= mae_threshold)

@@ -2,14 +2,24 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
-  build-and-deploy:
+  test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install uv && uv pip install --system .
+      - run: pytest tests/ -v --tb=short
+
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -22,44 +32,27 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Build and push weather-api image
-      - name: Build, Tag, and Push weather-api
+      - name: Build and push weather-api
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: weather-api
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f Dockerfile .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker build -t $ECR_REGISTRY/weather-api:$IMAGE_TAG -f Dockerfile .
+          docker push $ECR_REGISTRY/weather-api:$IMAGE_TAG
+          docker tag $ECR_REGISTRY/weather-api:$IMAGE_TAG $ECR_REGISTRY/weather-api:latest
+          docker push $ECR_REGISTRY/weather-api:latest
 
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-
-      # Build and push weather-ui image
-      - name: Build, Tag, and Push weather-ui
+      - name: Build and push weather-ui
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: weather-ui
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f Dockerfile.streamlit .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker build -t $ECR_REGISTRY/weather-ui:$IMAGE_TAG -f Dockerfile.streamlit .
+          docker push $ECR_REGISTRY/weather-ui:$IMAGE_TAG
+          docker tag $ECR_REGISTRY/weather-ui:$IMAGE_TAG $ECR_REGISTRY/weather-ui:latest
+          docker push $ECR_REGISTRY/weather-ui:latest
 
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-
-      # Deploy to ECS - API
-      - name: Deploy weather-api-service
+      - name: Deploy to ECS
         run: |
-          aws ecs update-service \
-            --cluster weather-cluster-ecs \
-            --service weather-api-service \
-            --force-new-deployment
-
-      # Deploy to ECS - Streamlit
-      - name: Deploy weather-ui-service
-        run: |
-          aws ecs update-service \
-            --cluster weather-cluster-ecs \
-            --service weather-ui-service \
-            --force-new-deployment
+          aws ecs update-service --cluster weather-cluster-ecs --service weather-api-service --force-new-deployment
+          aws ecs update-service --cluster weather-cluster-ecs --service weather-ui-service --force-new-deployment

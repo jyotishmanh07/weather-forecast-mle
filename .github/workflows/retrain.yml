@@ -1,0 +1,94 @@
+name: Scheduled Retraining
+
+on:
+  schedule:
+    # Runs at 02:00 UTC every day
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      n_trials:
+        description: "Number of Optuna tuning trials"
+        required: false
+        default: "30"
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    env:
+      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+      MLFLOW_MODEL_NAME: weather-xgb
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install uv && uv pip install --system .
+
+      - name: Run feature pipeline
+        run: |
+          python -m pipelines.feature_pipeline.load
+          python -m pipelines.feature_pipeline.preprocess
+          python -m pipelines.feature_pipeline.feature_engineering
+
+      - name: Train and register model
+        run: |
+          python -m pipelines.training_pipeline.tune \
+            --n-trials ${{ github.event.inputs.n_trials || 30 }}
+
+      - name: Evaluate against holdout
+        id: evaluate
+        run: |
+          python -c "
+          import joblib, numpy as np, pandas as pd
+          from pathlib import Path
+          from sklearn.metrics import mean_absolute_error
+
+          MAE_THRESHOLD = 3.0
+          df = pd.read_csv('data/processed/holdout_encoded.csv')
+          if 'time' in df.columns:
+              df = df.drop(columns=['time'])
+
+          model  = joblib.load('models/best_weather_xgb.pkl')
+          scaler = joblib.load('models/tuned_scaler.pkl')
+
+          y_true = df['temperature_2m_max'].values
+          X = scaler.transform(df.drop(columns=['temperature_2m_max']))
+          mae = mean_absolute_error(y_true, model.predict(X))
+
+          passed = mae <= MAE_THRESHOLD
+          print(f'MAE={mae:.4f}  threshold={MAE_THRESHOLD}  gate_passed={passed}')
+          " | tee /tmp/eval_output.txt
+          echo "gate_passed=$(grep -oP 'gate_passed=\K\S+' /tmp/eval_output.txt)" >> $GITHUB_OUTPUT
+
+      - name: Promote model to Production
+        if: steps.evaluate.outputs.gate_passed == 'True'
+        run: |
+          python -c "
+          import os, mlflow
+          from mlflow.tracking import MlflowClient
+          client = MlflowClient()
+          versions = client.get_latest_versions('weather-xgb', stages=['Staging'])
+          if versions:
+              client.transition_model_version_stage(
+                  name='weather-xgb',
+                  version=versions[0].version,
+                  stage='Production',
+              )
+              print(f'Promoted v{versions[0].version} to Production')
+          "
+
+      - name: Trigger ECS redeployment
+        if: steps.evaluate.outputs.gate_passed == 'True'
+        run: |
+          aws ecs update-service \
+            --cluster weather-cluster-ecs \
+            --service weather-api-service \
+            --force-new-deployment

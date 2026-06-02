@@ -1,0 +1,39 @@
+# Version control
+.git/
+.github/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Test & lint artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Data & ML artifacts — fetched at runtime from S3 / MLflow
+data/
+mlruns/
+mlflow.db
+models/
+*.csv
+predictions.csv
+
+# Secrets & local config
+.env
+.env.local
+.envrc
+
+# Dev tooling
+.vscode/
+*.log

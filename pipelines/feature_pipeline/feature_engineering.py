@@ -6,8 +6,11 @@ Feature Engineering Script for Weather Forecasting.
 """
 
 import pandas as pd
+import pandera.pandas as pa
 import logging
 from pathlib import Path
+
+from pipelines.feature_pipeline.schemas import ProcessedWeatherSchema
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -15,25 +18,14 @@ LOGGER = logging.getLogger(__name__)
 
 PROCESSED_DIR = Path("data/processed")
 
-def validate_weather_data(df: pd.DataFrame, dataset_name: str):
-    # City Check (Must be 1-10)
-    assert df['city'].between(1, 10).all(), f"[{dataset_name}] City ID out of range! Must be 1-10."
-    
-    # Temperature Checks (-30 to 45 degrees)
-    assert df['temperature_2m_max'].between(-30, 45).all(), f"[{dataset_name}] Max temp out of logical bounds!"
-    assert df['temperature_2m_min'].between(-30, 45).all(), f"[{dataset_name}] Min temp out of logical bounds!"
-    
-    # Logic Check: Max temp must always be >= Min temp
-    assert (df['temperature_2m_max'] >= df['temperature_2m_min']).all(), f"[{dataset_name}] Found Min Temp > Max Temp!"
-    
-    # Precipitation Check (0.0 to 60.0)
-    assert df['precipitation_sum'].between(0.0, 60.0).all(), f"[{dataset_name}] Precipitation out of bounds!"
-    
-    # Valid WMO Weathercodes Check
-    valid_codes = [0, 1, 2, 3, 45, 51, 53, 55, 61, 63, 65, 71, 73, 75, 80, 81, 82, 95, 96, 99]
-    assert df['weathercode'].isin(valid_codes).all(), f"[{dataset_name}] Found an invalid WMO weathercode!"
-    
-    LOGGER.info(f"{dataset_name} passed all validation checks.")
+def validate_weather_data(df: pd.DataFrame, dataset_name: str) -> None:
+    try:
+        ProcessedWeatherSchema.validate(df, lazy=True)
+        LOGGER.info(f"{dataset_name} passed all validation checks.")
+    except pa.errors.SchemaErrors as exc:
+        failure_cases = exc.failure_cases[["check", "column", "failure_case", "index"]]
+        LOGGER.error(f"[{dataset_name}] Schema validation failed:\n{failure_cases.to_string()}")
+        raise
 
 def encode_features(df: pd.DataFrame) -> pd.DataFrame:
     """

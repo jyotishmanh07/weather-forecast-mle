@@ -8,11 +8,15 @@ Inference pipeline for Weather Forecasting.
 
 from __future__ import annotations
 import argparse
+import os
 import pandas as pd
-import numpy as np
 import logging
 from pathlib import Path
 from joblib import load
+
+import mlflow
+import mlflow.xgboost
+from mlflow.tracking import MlflowClient
 
 # Import internal modules
 from pipelines.feature_pipeline.preprocess import clean_weather_data
@@ -26,64 +30,107 @@ DEFAULT_MODEL = PROJECT_ROOT / "models" / "best_weather_xgb.pkl"
 DEFAULT_SCALER = PROJECT_ROOT / "models" / "tuned_scaler.pkl"
 TRAIN_FE_PATH = PROJECT_ROOT / "data" / "processed" / "train_encoded.csv"
 
-# Load the exact 15 features the model expects
+REGISTRY_MODEL_NAME = os.getenv("MLFLOW_MODEL_NAME", "weather-xgb")
+REGISTRY_STAGE = os.getenv("MLFLOW_MODEL_STAGE", "Production")
+
+# Load the exact feature columns the model expects
 if TRAIN_FE_PATH.exists():
     _train_cols = pd.read_csv(TRAIN_FE_PATH, nrows=1)
     TRAIN_FEATURE_COLUMNS = [
-        c for c in _train_cols.columns 
+        c for c in _train_cols.columns
         if c not in ["temperature_2m_max", "time"]
     ]
 else:
     TRAIN_FEATURE_COLUMNS = None
 
+
+def _load_from_registry():
+    """Try loading model and scaler from MLflow Model Registry.
+
+    Checks Production stage first, then Staging. Returns (model, scaler, version_str)
+    or (None, None, None) if the registry is unavailable.
+    """
+    client = MlflowClient()
+    for stage in (REGISTRY_STAGE, "Staging"):
+        try:
+            versions = client.get_latest_versions(REGISTRY_MODEL_NAME, stages=[stage])
+            if not versions:
+                continue
+            version = versions[0]
+            model = mlflow.xgboost.load_model(f"models:/{REGISTRY_MODEL_NAME}/{stage}")
+            scaler_local = mlflow.artifacts.download_artifacts(
+                run_id=version.run_id, artifact_path="tuned_scaler.pkl"
+            )
+            scaler = load(scaler_local)
+            version_str = f"{REGISTRY_MODEL_NAME}/v{version.version} ({stage})"
+            LOGGER.info(f"Loaded model from registry: {version_str}")
+            return model, scaler, version_str
+        except Exception as e:
+            LOGGER.warning(f"Registry load failed (stage={stage}): {e}")
+    return None, None, None
+
+
 def predict(
     input_df: pd.DataFrame,
-    model_path: Path | str = DEFAULT_MODEL,
-    scaler_path: Path | str = DEFAULT_SCALER,
+    model=None,
+    scaler=None,
+    model_path: Path | str | None = None,
+    scaler_path: Path | str | None = None,
 ) -> pd.DataFrame:
-    """Run full inference pipeline on raw weather data."""
+    """Run full inference pipeline on raw weather data.
+
+    Accepts pre-loaded model/scaler objects (preferred for servers that load
+    once at startup). When neither objects nor paths are supplied, tries the
+    MLflow Model Registry then falls back to local files.
+    """
+    if model is None:
+        if model_path is not None:
+            model_path = Path(model_path)
+            scaler_path = Path(scaler_path) if scaler_path else DEFAULT_SCALER
+            model = load(model_path)
+            scaler = load(scaler_path) if scaler_path.exists() else None
+        else:
+            model, scaler, _ = _load_from_registry()
+            if model is None:
+                LOGGER.info("Registry unavailable — loading from local files.")
+                model = load(DEFAULT_MODEL)
+                scaler = load(DEFAULT_SCALER) if DEFAULT_SCALER.exists() else None
 
     # Standard cleaning (handles lags/rolling for cities)
     df = clean_weather_data(input_df.copy())
-    
+
     # 'clean_weather_data' sets 'time' as index. Because multiple cities share
     # the same time, we must reset the index to avoid duplicate labels during reindex.
     df = df.reset_index(drop=True)
-    
+
     # Validation
     validate_weather_data(df, "Inference")
-    
+
     # Encoding (City One-Hot Encoding)
     df = encode_features(df)
-    
+
     # Capture actuals for the final output
-    y_true = None
     if "temperature_2m_max" in df.columns:
-        y_true = df["temperature_2m_max"].values
         df = df.drop(columns=["temperature_2m_max"])
 
-    # Feature Alignment (Forces exactly 15 columns in correct order)
+    # Feature alignment — forces exactly the columns the model was trained on
     if TRAIN_FEATURE_COLUMNS is not None:
         df = df.reindex(columns=TRAIN_FEATURE_COLUMNS, fill_value=0)
     elif "time" in df.columns:
         df = df.drop(columns=["time"])
 
     # Scaling
-    if Path(scaler_path).exists():
-        scaler = load(scaler_path)
+    if scaler is not None:
         X_scaled = scaler.transform(df)
     else:
-        LOGGER.warning("Scaler not found. Proceeding without scaling.")
-        X_scaled = df
+        LOGGER.warning("Scaler not available — proceeding without scaling.")
+        X_scaled = df.values
 
-    # XGBoost Model Inference
-    model = load(model_path)
     preds = model.predict(X_scaled)
 
-    # Formatting output for Streamlit/API
+    # Build output aligned to original input
     out = input_df.copy()
     out["predicted_temp_max"] = preds
-
     if "temperature_2m_max" in out.columns:
         out = out.rename(columns={"temperature_2m_max": "actual_temp_max"})
 

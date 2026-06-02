@@ -1,36 +1,30 @@
+import logging
 import pandas as pd
-import requests
-import mlflow
+from pathlib import Path
 from zenml import step
+from pipelines.inference_pipeline.inference import predict
 
-# Added the experiment tracker to capture batch results
-@step(experiment_tracker="mlflow_tracker", enable_cache=False)
-def predictor(data: pd.DataFrame) -> pd.DataFrame:
-    """Sends cleaned news data and logs prediction results to MLflow."""
-    url = "http://127.0.0.1:8000/invocations"
+LOGGER = logging.getLogger(__name__)
 
-    articles = [{"text": str(val)[:2000]} for val in data['content'].tolist()]
-    
-    payload = {
-        "instances": articles,
-        "params": {"truncation": True, "max_length": 512}
-    }
-    
-    try:
-        response = requests.post(url, json=payload, timeout=120)
-        
-        if response.status_code != 200:
-            raise RuntimeError(f"Server error: {response.text}")
-            
-        predictions = response.json().get("predictions")
-        data["prediction"] = [p["label"] for p in predictions]
-        data["confidence"] = [p["score"] for p in predictions]
 
-        mlflow.log_table(data=data, artifact_file="inference/batch_predictions.json")
-        mlflow.log_metric("inference_count", len(data))
-        
-        print("Batch inference successful and logged to MLflow!")
-        return data
+@step
+def run_batch_inference(
+    df: pd.DataFrame,
+    model_path: str = "models/best_weather_xgb.pkl",
+    scaler_path: str = "models/tuned_scaler.pkl",
+    output_path: str = "predictions.csv",
+) -> pd.DataFrame:
+    """Runs the full inference pipeline on raw weather data.
 
-    except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"Communication error: {e}")
+    Applies preprocessing, validation, feature encoding, scaling, and
+    XGBoost prediction. Saves results to output_path and returns the
+    predictions DataFrame.
+    """
+    predictions = predict(df, model_path=model_path, scaler_path=scaler_path)
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    predictions.to_csv(out, index=False)
+    LOGGER.info(f"Saved {len(predictions)} predictions to {out}")
+
+    return predictions

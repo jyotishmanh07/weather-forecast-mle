@@ -1,8 +1,10 @@
+import os
 import pandas as pd
 import numpy as np
 import logging
 import joblib
 import mlflow
+import mlflow.sklearn
 from pathlib import Path
 from sklearn.linear_model import Lasso
 from sklearn.preprocessing import StandardScaler
@@ -15,6 +17,7 @@ LOGGER = logging.getLogger(__name__)
 PROCESSED_DIR = Path("data/processed")
 MODELS_DIR = Path("models")
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
+REGISTRY_MODEL_NAME = os.getenv("MLFLOW_BASELINE_MODEL_NAME", "weather-lasso-baseline")
 
 def load_and_preprocess(train_path, eval_path, target='temperature_2m_max'):
     """Loads data and handles missing values for all advanced features."""
@@ -58,21 +61,39 @@ def train_model(X_train, y_train, X_eval, y_eval, alpha=0.1):
     return model, scaler, metrics
 
 def go(alpha=0.1):
-    with mlflow.start_run(run_name="weather_training_with_lags"):
+    with mlflow.start_run(run_name="weather_training_with_lags") as run:
         X_train, y_train, X_eval, y_eval = load_and_preprocess(
             PROCESSED_DIR / "train_encoded.csv",
             PROCESSED_DIR / "eval_encoded.csv"
         )
-        
+
         model, scaler, metrics = train_model(X_train, y_train, X_eval, y_eval, alpha=alpha)
-        
+
         mlflow.log_params({"alpha": alpha, "model_type": "Lasso", "features": "lags_and_rolling"})
         mlflow.log_metrics(metrics)
-        
+
+        # Save locally (dev fallback)
         joblib.dump(model, MODELS_DIR / "weather_model.pkl")
         joblib.dump(scaler, MODELS_DIR / "scaler.pkl")
-        
-        LOGGER.info(f"Training Complete. MAE: {metrics['mae']:.4f}")
+
+        # Log model + scaler as MLflow artifacts
+        mlflow.sklearn.log_model(model, artifact_path="model")
+        mlflow.log_artifact(str(MODELS_DIR / "scaler.pkl"))
+
+        # Register and transition to Staging
+        model_uri = f"runs:/{run.info.run_id}/model"
+        mv = mlflow.register_model(model_uri, REGISTRY_MODEL_NAME)
+        client = mlflow.tracking.MlflowClient()
+        client.transition_model_version_stage(
+            name=REGISTRY_MODEL_NAME,
+            version=mv.version,
+            stage="Staging",
+        )
+
+        LOGGER.info(
+            f"Registered {REGISTRY_MODEL_NAME} v{mv.version} → Staging  "
+            f"(MAE: {metrics['mae']:.4f})"
+        )
 
 if __name__ == "__main__":
     go()
