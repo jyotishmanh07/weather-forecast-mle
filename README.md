@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Weather Forecast MLE
 
 An end-to-end MLOps project that forecasts daily maximum temperature for five German cities using XGBoost, with experiment tracking, a model registry, data validation, drift monitoring, a REST API, an interactive dashboard, and automated CI/CD to AWS ECS.
@@ -39,9 +40,34 @@ Docker → Amazon ECR → ECS  ◀──  GitHub Actions retrain.yml
 **Target:** `temperature_2m_max` (daily maximum temperature, °C)
 
 ---
+=======
+# Weather Forecast Machine Learning Engineering
+
+### Problem Statement
+Weather forecast MLE is an end-to-end machine learning pipeline that predicts weather conditions using XGBoost. The project follows ML engineering best practices by utilizing modular pipelines, comprehensive testing, and automated experiment tracking.
+
+### Technology Stack
+
+#### Machine Learning
+
+* XGBoost for regression.
+* MLflow for experiment tracking.
+* Optuna for hyperparameter tuning.
+  
+#### Data Processing and Analytics
+* Pandas & NumPy for data manipulation and numerical computing.
+* Scikit-learn for data preprocessing.
+* Pytest for unit testing
+
+#### API and Dashboard
+* Streamlit for interactive user interface.
+* Plotly for data visualizations.
+* FastAPI for REST endpoints.
+>>>>>>> refs/remotes/origin/main
 
 ## Stack
 
+<<<<<<< HEAD
 | Layer | Tool |
 |---|---|
 | Data ingestion | Open-Meteo Archive API |
@@ -58,6 +84,16 @@ Docker → Amazon ECR → ECS  ◀──  GitHub Actions retrain.yml
 | Artifact storage | AWS S3 |
 | Containerisation | Docker + docker-compose |
 | CI/CD | GitHub Actions → ECR → ECS |
+=======
+#### Cloud and Devops
+* AWS for using S3, ECS Fargate, ECR, and ALB.
+* Docker for containerization.
+* GitHub Actions to manage the CI/CD pipeline for automated deployment.
+
+#### ML Engineering Pipeline
+![ML Engineering Pipeline](mle_flowchart.png)
+
+>>>>>>> refs/remotes/origin/main
 
 ---
 
