@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# ML artifacts — fetched at runtime from S3 / MLflow
+mlruns/
+mlflow.db
+models/
+data/prediction_log.csv
+
+# Secrets
+.env
+.env.local
+.envrc
+
+# Dev tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
+
+# IDE
+.vscode/
+.idea/
