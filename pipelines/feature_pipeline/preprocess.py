@@ -31,18 +31,28 @@ def add_time_series_features(df: pd.DataFrame) -> pd.DataFrame:
     df['rolling_temp_7d_mean'] = group.transform(lambda x: x.rolling(7).mean().shift(1))
     df['rolling_temp_7d_std'] = group.transform(lambda x: x.rolling(7).std().shift(1))
 
-    return df.fillna(0)
+    # Only the engineered lag/rolling columns are legitimately NaN for the first
+    # rows of each city; fill those with 0. Do NOT fill genuine NaNs (e.g. a
+    # missing target) here — those rows are dropped in clean_weather_data.
+    lag_cols = ['lag_temp_1d', 'lag_temp_3d', 'lag_temp_7d',
+                'rolling_temp_7d_mean', 'rolling_temp_7d_std']
+    df[lag_cols] = df[lag_cols].fillna(0)
+    return df
 
 def clean_weather_data(df: pd.DataFrame) -> pd.DataFrame:
     if 'time' not in df.columns:
         df = df.reset_index().rename(columns={'index': 'time'})
-    
+
     df['time'] = pd.to_datetime(df['time'])
     df['month-day'] = df['time'].dt.strftime('%m.%d').astype(float)
-    
+
+    # Deduplicate on the natural key and drop rows missing the target BEFORE
+    # engineering features, so lag/rolling values aren't computed from dupes.
+    df = df.drop_duplicates(subset=['time', 'city'])
+    df = df.dropna(subset=['temperature_2m_max'])
+
     df = add_time_series_features(df)
-    
-    df = df.dropna().drop_duplicates()
+
     df.set_index('time', inplace=True)
     df = df.sort_index()
     return df

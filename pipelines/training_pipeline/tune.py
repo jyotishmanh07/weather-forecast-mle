@@ -41,8 +41,8 @@ def _load_and_prepare(train_path, eval_path, target='temperature_2m_max'):
     
     return X_train, y_train, X_eval, y_eval
 
-def tune_weather_model(n_trials: int = 30):
-    mlflow.set_experiment("weather_xgb_lags_tuning")
+def tune_weather_model(n_trials: int = 30, experiment_name: str = "weather_xgb_lags_tuning"):
+    mlflow.set_experiment(experiment_name)
     
     X_train, y_train, X_eval, y_eval = _load_and_prepare(
         PROCESSED_DIR / "train_encoded.csv",

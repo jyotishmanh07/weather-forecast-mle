@@ -3,11 +3,29 @@ import sys
 import pytest
 import pandas as pd
 import numpy as np
+import pandera.pandas as pa
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from pipelines.feature_pipeline.preprocess import clean_weather_data
 from pipelines.feature_pipeline.feature_engineering import validate_weather_data, encode_features
+
+
+def _valid_processed_row() -> pd.DataFrame:
+    """A single row satisfying ProcessedWeatherSchema (floats are real floats
+    since the schema uses coerce=False)."""
+    return pd.DataFrame({
+        'city': [1],
+        'weathercode': [0],
+        'temperature_2m_max': [10.0],
+        'temperature_2m_min': [5.0],
+        'precipitation_sum': [0.0],
+        'lag_temp_1d': [9.0],
+        'lag_temp_3d': [8.0],
+        'lag_temp_7d': [7.0],
+        'rolling_temp_7d_mean': [8.0],
+        'rolling_temp_7d_std': [1.0],
+    })
 
 # =========================
 # Preprocessing Unit Tests
@@ -47,21 +65,30 @@ def test_clean_weather_data_deduplication():
 # Feature Engineering Unit Tests
 # ===============================
 
+def test_validate_weather_data_accepts_valid():
+    """A fully-valid processed row passes ProcessedWeatherSchema validation."""
+    validate_weather_data(_valid_processed_row(), "Test")  # should not raise
+
+
 def test_validate_weather_data_bounds():
-    """Confirms strict validation from 02_feature_engg.ipynb."""
-    # Test invalid City ID
-    df_bad_city = pd.DataFrame({'city': [99], 'temperature_2m_max': [10], 'temperature_2m_min': [5], 'precipitation_sum': [0], 'weathercode': [0]})
-    with pytest.raises(AssertionError, match="City ID out of range"):
+    """Confirms ProcessedWeatherSchema rejects out-of-bounds / inconsistent data."""
+    # Invalid City ID (schema requires 1 <= city <= 10)
+    df_bad_city = _valid_processed_row()
+    df_bad_city['city'] = [99]
+    with pytest.raises(pa.errors.SchemaErrors):
         validate_weather_data(df_bad_city, "Test")
 
-    # Test Max Temp < Min Temp
-    df_bad_temp = pd.DataFrame({'city': [1], 'temperature_2m_max': [5], 'temperature_2m_min': [10], 'precipitation_sum': [0], 'weathercode': [0]})
-    with pytest.raises(AssertionError, match="Found Min Temp > Max Temp"):
+    # Max Temp < Min Temp (dataframe-level max_gte_min check)
+    df_bad_temp = _valid_processed_row()
+    df_bad_temp['temperature_2m_max'] = [5.0]
+    df_bad_temp['temperature_2m_min'] = [10.0]
+    with pytest.raises(pa.errors.SchemaErrors):
         validate_weather_data(df_bad_temp, "Test")
 
-    # Test Invalid WMO Code
-    df_bad_wmo = pd.DataFrame({'city': [1], 'temperature_2m_max': [10], 'temperature_2m_min': [5], 'precipitation_sum': [0], 'weathercode': [999]})
-    with pytest.raises(AssertionError, match="Found an invalid WMO weathercode"):
+    # Invalid WMO weathercode (not in the allowed set)
+    df_bad_wmo = _valid_processed_row()
+    df_bad_wmo['weathercode'] = [999]
+    with pytest.raises(pa.errors.SchemaErrors):
         validate_weather_data(df_bad_wmo, "Test")
 
 def test_encode_features_one_hot():
