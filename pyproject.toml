@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "weather-forecast-mle"
 version = "0.1.0"
@@ -30,3 +34,10 @@ dependencies = [
 dev = [
     "ipykernel (>=7.2.0,<8.0.0)"
 ]
+
+# This project is run from the repo root (e.g. `python -m pipelines...`, `pytest`),
+# not imported as an installed package. Installing `.` is only used to pull in the
+# dependencies above, so we build a metadata-only wheel and skip package discovery
+# (which otherwise fails on the many top-level dirs: data/, steps/, models/, ...).
+[tool.setuptools]
+packages = []
