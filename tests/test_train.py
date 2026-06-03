@@ -42,15 +42,31 @@ def test_train_model_saves_artifacts(tmp_path):
 
 def test_tune_weather_model_integration(tmp_path):
     """Runs a 2-trial tune to ensure the Optuna-MLflow loop is solid."""
+    import mlflow
+
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("pipelines.training_pipeline.tune.MODELS_DIR", tmp_path)
         mp.setattr("pipelines.training_pipeline.tune.PROCESSED_DIR", PROCESSED_DIR)
-        
-        tune_weather_model(n_trials=2, experiment_name="ci_test_tuning")
-        
-        assert (tmp_path / "best_weather_xgb.pkl").exists()
-        assert (tmp_path / "tuned_scaler.pkl").exists()
-        
+
+        # Isolate MLflow tracking + registry to a temp store so the test never
+        # touches ambient state (e.g. a committed mlflow.db with absolute paths).
+        tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+        mp.setenv("MLFLOW_TRACKING_URI", tracking_uri)
+        mp.setenv("MLFLOW_REGISTRY_URI", tracking_uri)
+        prev_uri = mlflow.get_tracking_uri()
+        mlflow.set_tracking_uri(tracking_uri)
+        # New experiment writes artifacts under tmp_path instead of cwd.
+        mlflow.create_experiment(
+            "ci_test_tuning", artifact_location=(tmp_path / "artifacts").as_uri()
+        )
+        try:
+            tune_weather_model(n_trials=2, experiment_name="ci_test_tuning")
+
+            assert (tmp_path / "best_weather_xgb.pkl").exists()
+            assert (tmp_path / "tuned_scaler.pkl").exists()
+        finally:
+            mlflow.set_tracking_uri(prev_uri)
+
     print("tune_weather_model integration test passed")
 
 def test_model_prediction_range():
