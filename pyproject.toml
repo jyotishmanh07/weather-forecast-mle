@@ -38,7 +38,7 @@ dev = [
 # This project is run from the repo root (e.g. `python -m pipelines...`, `pytest`),
 # not imported as an installed package. Installing `.` is only used to pull in the
 # dependencies above, so we build a metadata-only wheel and skip package discovery
-# (which otherwise fails on the many top-level dirs: data/, steps/, models/, ...).
+# (which otherwise fails on the many top-level dirs: data/, models/, notebooks/, ...).
 [tool.setuptools]
 packages = []
 

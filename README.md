@@ -6,6 +6,8 @@ An end-to-end MLOps project that forecasts daily maximum temperature for five Ge
 
 ## Architecture
 
+![End-to-end ML workflow: Load → Preprocess → Feature Engineering → Train/Tune → Pipelines → Containerize & CI/CD → Deploy → Frontend](mle_flowchart.png)
+
 ```
 Open-Meteo Archive API
         │
@@ -78,7 +80,6 @@ Docker → Amazon ECR → ECS  ◀──  GitHub Actions retrain.yml
 │   │   └── inference.py          # full preprocess → predict pipeline
 │   └── monitoring_pipeline/
 │       └── drift.py              # Evidently drift check, prediction logger
-├── steps/                        # ZenML step wrappers
 ├── tests/                        # pytest unit + integration tests
 ├── data/
 │   ├── raw/                      # train / eval / holdout CSVs
@@ -104,13 +105,13 @@ Docker → Amazon ECR → ECS  ◀──  GitHub Actions retrain.yml
 ### Prerequisites
 
 - Python 3.12
-- [Poetry](https://python-poetry.org/) (`pip install poetry`)
+- [uv](https://docs.astral.sh/uv/) (`pip install uv`)
 - AWS credentials with S3 read access (for model artifacts)
 
 ### Install
 
 ```bash
-poetry install
+uv sync
 ```
 
 ### Run the full pipeline locally
@@ -262,6 +263,18 @@ The feature pipeline validates every dataset split against `ProcessedWeatherSche
 
 ---
 
+## Data Leakage Prevention
+
+Splits and features are constructed so nothing from the future reaches training:
+
+- **Chronological splits** — the 360-day ingestion window is split by date, never at random: train = everything up to *T−10 days*, eval = days *T−10…T−5*, holdout = the most recent 5 days (`load.py`).
+- **Per-city lag features** — `lag_temp_{1,3,7}d` use `groupby('city').shift()`, so a feature value can only come from that city's own past.
+- **Shifted rolling windows** — `rolling_temp_7d_mean/std` are computed with `.rolling(7)…shift(1)`, so a day's target never contributes to its own features.
+- **Clean before engineering** — duplicates and rows missing the target are dropped *before* lag/rolling computation, so features are never derived from bad rows.
+- **Fit on train only** — the `StandardScaler` is fit on the training split and only applied to eval/holdout; the fitted scaler is persisted next to the model so serving applies the identical transform.
+
+---
+
 ## Drift Monitoring
 
 Every call to `/predict` logs the raw input features (`weathercode`, `temperature_2m_min`, `precipitation_sum`) to `data/prediction_log.csv`. The `/metrics` endpoint compares the last 500 logged rows against the training distribution using Evidently:
@@ -271,6 +284,31 @@ Every call to `/predict` logs the raw input features (`weathercode`, `temperatur
 - **Dataset drifted** — true if ≥ 50% of monitored columns show drift
 
 When `dataset_drifted` is true, the nightly retraining workflow can be triggered manually via `workflow_dispatch` to retrain on fresh data.
+
+---
+
+## Cloud Infrastructure & Deployment
+
+| Resource | Name | Purpose |
+|---|---|---|
+| ECR repositories | `weather-api`, `weather-ui` | Images tagged with commit SHA + `latest` |
+| ECS cluster | `weather-cluster-ecs` | Fargate services `weather-api-service` (:8000) and `weather-ui-service` (:8501) |
+| S3 bucket | `$S3_BUCKET` | Model and data artifacts |
+
+**S3 bucket layout:**
+
+```
+s3://$S3_BUCKET/
+├── models/                  # production artifacts — downloaded by the API at startup
+│   ├── best_weather_xgb.pkl
+│   └── tuned_scaler.pkl
+├── processed/               # encoded datasets
+└── retrain/<YYYY-MM-DD>/    # nightly archive: that night's model + raw/processed data
+```
+
+Containers ship without model weights (`models/` is dockerignored). At startup the API resolves a model in this order: MLflow Registry **Production** → **Staging** → S3 `models/` → local `.pkl` — so shipping a new model never requires rebuilding an image.
+
+**Required GitHub Actions secrets:** `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `S3_BUCKET`, `MLFLOW_TRACKING_URI`
 
 ---
 
@@ -289,6 +327,41 @@ Runs at **02:00 UTC** daily (also triggerable manually via `workflow_dispatch`):
 1. Run the full feature pipeline (fresh data from Open-Meteo)
 2. Tune XGBoost with Optuna, register new version in MLflow Registry → Staging
 3. Evaluate against holdout — if MAE passes threshold, promote to Production
-4. Trigger ECS redeployment with the new model
+4. Publish the new model to S3 (`models/`) and archive the night's model + data under `retrain/<date>/` for rollback/reproducibility
+5. Trigger ECS redeployment — restarted containers download the fresh model from S3 at startup
 
-Required secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `S3_BUCKET`, `MLFLOW_TRACKING_URI`
+---
+
+## Common Commands
+
+```bash
+# Run the test suite (same gate CI uses before deploying)
+pytest tests/ -v
+
+# Train the Lasso baseline
+python -m pipelines.training_pipeline.train
+
+# Tune XGBoost with a custom trial budget
+python -m pipelines.training_pipeline.tune --n-trials 50
+
+# Batch inference on a raw CSV
+python -m pipelines.inference_pipeline.inference \
+  --input data/raw/holdout.csv --output data/predictions.csv
+
+# Full local stack (MLflow + API + UI)
+docker-compose up --build
+
+# Trigger the nightly retraining manually (requires gh CLI)
+gh workflow run retrain.yml -f n_trials=30
+```
+
+---
+
+## Key Design Patterns
+
+- **Modular pipelines** — every stage is an independently runnable module (`python -m pipelines.<pipeline>.<step>`); the nightly workflow, tests, and local dev all compose the same building blocks.
+- **S3-first model storage** — images contain code only; model weights are pulled at startup, decoupling model releases from image builds.
+- **Validation gates at every boundary** — Pandera schemas between pipeline stages, Pydantic at the API edge, and an MAE threshold gate before any model is promoted to Production.
+- **Train/serve symmetry** — the fitted scaler and encoding logic are persisted with the model and reapplied verbatim at inference time, so serving sees exactly the transforms training saw.
+
+
