@@ -85,6 +85,19 @@ jobs:
               print(f'Promoted v{versions[0].version} to Production')
           "
 
+      - name: Publish model and data to S3
+        if: steps.evaluate.outputs.gate_passed == 'True'
+        run: |
+          DATE=$(date -u +%F)
+          # Production artifacts — downloaded by the API at container startup
+          aws s3 cp models/best_weather_xgb.pkl "s3://$S3_BUCKET/models/best_weather_xgb.pkl"
+          aws s3 cp models/tuned_scaler.pkl "s3://$S3_BUCKET/models/tuned_scaler.pkl"
+          # Dated archive — enables rollback and reproducing this run
+          aws s3 cp models/best_weather_xgb.pkl "s3://$S3_BUCKET/retrain/$DATE/best_weather_xgb.pkl"
+          aws s3 cp models/tuned_scaler.pkl "s3://$S3_BUCKET/retrain/$DATE/tuned_scaler.pkl"
+          aws s3 sync data/raw "s3://$S3_BUCKET/retrain/$DATE/raw"
+          aws s3 sync data/processed "s3://$S3_BUCKET/retrain/$DATE/processed"
+
       - name: Trigger ECS redeployment
         if: steps.evaluate.outputs.gate_passed == 'True'
         run: |

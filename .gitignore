@@ -18,6 +18,8 @@ mlruns/
 mlflow.db
 models/
 data/prediction_log.csv
+data/predictions.csv
+predictions.csv
 
 # Secrets
 .env

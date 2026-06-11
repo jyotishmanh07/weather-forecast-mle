@@ -140,7 +140,7 @@ if __name__ == "__main__":
     # Standard CLI runner logic
     parser = argparse.ArgumentParser(description="Run inference on new weather data.")
     parser.add_argument("--input", type=str, required=True, help="Path to raw weather CSV")
-    parser.add_argument("--output", type=str, default="predictions.csv", help="Output path")
+    parser.add_argument("--output", type=str, default="data/predictions.csv", help="Output path")
     parser.add_argument("--model", type=str, default=str(DEFAULT_MODEL))
     parser.add_argument("--scaler", type=str, default=str(DEFAULT_SCALER))
 
