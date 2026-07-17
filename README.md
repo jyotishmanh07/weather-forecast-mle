@@ -2,7 +2,7 @@
 
 An end-to-end MLOps project that forecasts **next-day** maximum temperature for five German cities with XGBoost. The point of the project is the **operations**, not the model: a closed-loop retraining system with a no-regression promotion gate and rollback, experiment tracking + a model registry, data/Pandera validation, drift monitoring, a REST API, a dashboard, and CI/CD — all on a **free** stack you can run yourself.
 
-> Built to be cloned and run. No paid cloud account required: experiment tracking + storage on **DagsHub**, images on **GHCR**, the live demo on **Hugging Face Spaces**, and orchestration on a local **Apache Airflow**.
+> Built to be cloned and run. No paid cloud account required: experiment tracking + storage on **DagsHub**, images on **GHCR**, and orchestration on a local **Apache Airflow**. The full stack runs on your machine with docker-compose.
 
 ---
 
@@ -55,8 +55,8 @@ An end-to-end MLOps project that forecasts **next-day** maximum temperature for 
 | UI | Streamlit + Plotly |
 | Containerisation | Docker + docker-compose |
 | Container registry | **GitHub Container Registry (GHCR)** |
-| Live demo / hosting | **Hugging Face Spaces** (Docker) |
-| CI/CD | GitHub Actions → GHCR → Hugging Face Spaces |
+| Local hosting | Docker + docker-compose |
+| CI/CD | GitHub Actions → GHCR |
 
 ---
 
@@ -84,7 +84,6 @@ An end-to-end MLOps project that forecasts **next-day** maximum temperature for 
 │   │   ├── weather_retrain_dag.py# closed-loop retrain + gated promotion
 │   │   └── weather_rollback_dag.py# manual champion rollback
 │   └── README.md                 # Airflow runbook
-├── spaces/                       # Hugging Face Space configs (api + ui)
 ├── tests/                        # pytest unit + integration tests
 ├── data/                         # DVC-tracked (raw/ + processed/); fetch with `dvc pull`
 ├── models/                       # local .pkl fallback (offline dev)
@@ -97,7 +96,7 @@ An end-to-end MLOps project that forecasts **next-day** maximum temperature for 
 ├── docker-compose.yml            # local API + UI (MLflow is hosted on DagsHub)
 ├── .env.example                  # required environment variables
 └── .github/workflows/
-    └── mlops.yml                 # CI: test → build to GHCR → deploy to HF Spaces
+    └── mlops.yml                 # CI: test → build + push images to GHCR
 ```
 
 ---
@@ -318,8 +317,8 @@ See [airflow/README.md](airflow/README.md) for details.
 
 If a promoted model misbehaves in production, trigger the **`weather_rollback`**
 DAG from the Airflow UI. It re-points `@champion` back to the `last_known_good`
-version and tags it `validation_status=rolled_back`. Restart the serving layer
-(HF Space) so it reloads the reverted champion.
+version and tags it `validation_status=rolled_back`. Restart the serving
+container (`docker compose restart api`) so it reloads the reverted champion.
 
 ---
 
@@ -357,13 +356,15 @@ HTML reports are written to `reports/` via `drift.save_drift_report_html()`.
 2. `build` — build `weather-api` (`Dockerfile`) and `weather-ui`
    (`Dockerfile.streamlit`) and push to **GHCR**
    (`ghcr.io/<owner>/weather-{api,ui}`), tagged with the commit SHA + `latest`.
-3. `deploy` — push the repo to each **Hugging Face Space** git remote so the live
-   demo redeploys. See [spaces/README.md](spaces/README.md) for one-time setup.
+
+There is no hosted deploy step — the stack runs locally from these images (or
+from source) via docker-compose, and a hosting provider can be pointed at the
+GHCR images later without workflow changes.
 
 **Scheduled retraining** is owned by the Airflow scheduler, not GitHub Actions.
 
-**Required GitHub config:** secret `HF_TOKEN`, variable `HF_USERNAME`. GHCR uses the
-built-in `GITHUB_TOKEN`. (No more AWS secrets.)
+**Required GitHub config:** none — GHCR authenticates with the built-in
+`GITHUB_TOKEN`. (No more AWS secrets.)
 
 ---
 

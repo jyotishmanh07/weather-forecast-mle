@@ -4,8 +4,11 @@ Flow (manual trigger for now; nightly 02:00 once verified):
 
     ingest -> preprocess -> feature_engineering -> dvc_push
         -> train_challenger -> evaluate_gate
-            -> promote_champion -> trigger_redeploy   (gate passes)
-            -> notify_no_promote                       (gate fails)
+            -> promote_champion       (gate passes)
+            -> notify_no_promote      (gate fails)
+
+Serving picks up a new @champion on its next restart (`docker compose restart
+api` locally; a hosted provider would hook a redeploy call after promotion).
 
 The data/training steps reuse the existing `python -m pipelines.*` entrypoints
 via BashOperator (cwd=/opt/airflow/project, repo on PYTHONPATH). The promotion
@@ -231,17 +234,6 @@ with DAG(
         python_callable=notify_no_promote,
     )
 
-    # Placeholder: tell the live serving layer to reload @champion.
-    # TODO(user): replace with a real trigger for your Hugging Face Space, e.g.
-    #   curl -X POST -H "Authorization: Bearer $HF_TOKEN" \
-    #     "https://huggingface.co/api/spaces/<user>/<space>/restart"
-    # HF Space name/token are user-specific — keep them out of the repo (use an
-    # Airflow Connection/Variable or an env var sourced from .env).
-    trigger_redeploy = BashOperator(
-        task_id="trigger_redeploy",
-        bash_command='echo "TODO: trigger HF Space rebuild so it reloads models:/<name>@champion"',
-    )
-
     ingest >> preprocess >> feature_engineering >> dvc_push >> train_challenger >> gate
-    gate >> promote >> trigger_redeploy
+    gate >> promote
     gate >> no_promote

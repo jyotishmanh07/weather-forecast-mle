@@ -41,8 +41,6 @@ ingest -> preprocess -> feature_engineering -> dvc_push -> train_challenger -> e
                                                           +-----------------------+----------------+
                                                           v                                        v
                                                   promote_champion                          notify_no_promote
-                                                          v
-                                                  trigger_redeploy
 ```
 
 - **ingest / preprocess / feature_engineering** — the existing
@@ -58,7 +56,10 @@ ingest -> preprocess -> feature_engineering -> dvc_push -> train_challenger -> e
   registered-model tag `last_known_good`, then re-points `@champion` to the
   challenger.
 - **notify_no_promote** — keeps the current champion (regression protection).
-- **trigger_redeploy** — placeholder; see the TODO below.
+
+After a promotion, restart the serving container so it reloads `@champion`
+(`docker compose restart api`). A hosted provider would hook a redeploy call
+here instead.
 
 ## Rollback runbook
 
@@ -70,17 +71,13 @@ version:
 2. It reads the `last_known_good` registered-model tag (set by the retrain DAG
    when it last promoted) and re-points `@champion` to that version, logging the
    before/after versions and tagging the version `validation_status=rolled_back`.
-3. Re-run `trigger_redeploy` / restart the serving Space so it reloads
-   `@champion`.
+3. Restart the serving container so it reloads `@champion`
+   (`docker compose restart api`).
 
 If `last_known_good` is unset, the task fails fast (there is no prior champion to
 roll back to — e.g. only one promotion has ever happened).
 
 ## TODOs for you
 
-- **`trigger_redeploy`** is a placeholder `echo`. Wire it to your Hugging Face
-  Space rebuild (e.g. `curl -X POST -H "Authorization: Bearer $HF_TOKEN"
-  https://huggingface.co/api/spaces/<user>/<space>/restart`). Keep the token out
-  of the repo — source it from `.env` or an Airflow Connection/Variable.
 - **DagsHub creds** — fill `MLFLOW_TRACKING_URI`, `MLFLOW_TRACKING_USERNAME`,
   `MLFLOW_TRACKING_PASSWORD`, `DAGSHUB_USER_TOKEN` in `airflow/.env`.
