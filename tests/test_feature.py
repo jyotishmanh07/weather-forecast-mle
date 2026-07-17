@@ -7,7 +7,7 @@ import pandera.pandas as pa
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from pipelines.feature_pipeline.preprocess import clean_weather_data
+from pipelines.feature_pipeline.preprocess import clean_weather_data, add_forecast_target
 from pipelines.feature_pipeline.feature_engineering import validate_weather_data, encode_features
 
 
@@ -60,6 +60,29 @@ def test_clean_weather_data_deduplication():
     cleaned = clean_weather_data(df)
     # Should drop the duplicate (row 2) and the NaN (row 3)
     assert len(cleaned) == 1
+
+def test_add_forecast_target_no_leakage():
+    """target_temp_max must be the NEXT day's max (strictly future) per city,
+    never the same-day value — this is the anti-leakage contract."""
+    df = pd.DataFrame({
+        'time': ['2026-01-01', '2026-01-02', '2026-01-03'],
+        'city': [1, 1, 1],
+        'weathercode': [0, 0, 0],
+        'temperature_2m_max': [10.0, 11.0, 12.0],
+        'temperature_2m_min': [1.0, 2.0, 3.0],
+        'precipitation_sum': [0.0, 0.0, 0.0],
+    })
+
+    out = add_forecast_target(clean_weather_data(df))
+
+    # The last day per city has no next-day target and is dropped.
+    assert len(out) == 2
+    # Each row carries the FOLLOWING day's max as its target.
+    assert out.loc['2026-01-01', 'target_temp_max'] == 11.0
+    assert out.loc['2026-01-02', 'target_temp_max'] == 12.0
+    # Today's observed max is preserved as a feature (distinct from the target).
+    assert out.loc['2026-01-01', 'temperature_2m_max'] == 10.0
+    assert (out['target_temp_max'] != out['temperature_2m_max']).all()
 
 # ===============================
 # Feature Engineering Unit Tests

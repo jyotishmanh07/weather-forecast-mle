@@ -1,0 +1,11 @@
+# Custom Airflow image: the stock apache/airflow base + the app's runtime deps.
+# The app pins (pandas==2.1.1, numpy==1.26.4, xgboost==3.2.0) clash with
+# Airflow's own constraints, so we install the app deps in a SECOND pip pass
+# WITHOUT the Airflow constraints file — the base layer above already resolved
+# Airflow itself under its constraints.
+FROM apache/airflow:2.10.3-python3.12
+
+COPY requirements-pipeline.txt /requirements-pipeline.txt
+
+# pip runs as the airflow user (USER airflow is the base image default).
+RUN pip install --no-cache-dir -r /requirements-pipeline.txt

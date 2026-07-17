@@ -31,42 +31,40 @@ DEFAULT_SCALER = PROJECT_ROOT / "models" / "tuned_scaler.pkl"
 TRAIN_FE_PATH = PROJECT_ROOT / "data" / "processed" / "train_encoded.csv"
 
 REGISTRY_MODEL_NAME = os.getenv("MLFLOW_MODEL_NAME", "weather-xgb")
-REGISTRY_STAGE = os.getenv("MLFLOW_MODEL_STAGE", "Production")
 
-# Load the exact feature columns the model expects
+# Load the exact feature columns the model expects. target_temp_max (the
+# next-day forecast target) is excluded; temperature_2m_max stays as a feature.
 if TRAIN_FE_PATH.exists():
     _train_cols = pd.read_csv(TRAIN_FE_PATH, nrows=1)
     TRAIN_FEATURE_COLUMNS = [
         c for c in _train_cols.columns
-        if c not in ["temperature_2m_max", "time"]
+        if c not in ["target_temp_max", "time"]
     ]
 else:
     TRAIN_FEATURE_COLUMNS = None
 
 
 def _load_from_registry():
-    """Try loading model and scaler from MLflow Model Registry.
+    """Try loading the served model and scaler from the MLflow Model Registry.
 
-    Checks Production stage first, then Staging. Returns (model, scaler, version_str)
-    or (None, None, None) if the registry is unavailable.
+    Resolves the @champion alias first, then falls back to @challenger. Returns
+    (model, scaler, version_str) or (None, None, None) if the registry is
+    unavailable.
     """
     client = MlflowClient()
-    for stage in (REGISTRY_STAGE, "Staging"):
+    for alias in ("champion", "challenger"):
         try:
-            versions = client.get_latest_versions(REGISTRY_MODEL_NAME, stages=[stage])
-            if not versions:
-                continue
-            version = versions[0]
-            model = mlflow.xgboost.load_model(f"models:/{REGISTRY_MODEL_NAME}/{stage}")
+            version = client.get_model_version_by_alias(REGISTRY_MODEL_NAME, alias)
+            model = mlflow.xgboost.load_model(f"models:/{REGISTRY_MODEL_NAME}@{alias}")
             scaler_local = mlflow.artifacts.download_artifacts(
                 run_id=version.run_id, artifact_path="tuned_scaler.pkl"
             )
             scaler = load(scaler_local)
-            version_str = f"{REGISTRY_MODEL_NAME}/v{version.version} ({stage})"
+            version_str = f"{REGISTRY_MODEL_NAME}/v{version.version} (@{alias})"
             LOGGER.info(f"Loaded model from registry: {version_str}")
             return model, scaler, version_str
         except Exception as e:
-            LOGGER.warning(f"Registry load failed (stage={stage}): {e}")
+            LOGGER.warning(f"Registry load failed (alias={alias}): {e}")
     return None, None, None
 
 
@@ -109,11 +107,9 @@ def predict(
     # Encoding (City One-Hot Encoding)
     df = encode_features(df)
 
-    # Capture actuals for the final output
-    if "temperature_2m_max" in df.columns:
-        df = df.drop(columns=["temperature_2m_max"])
-
-    # Feature alignment — forces exactly the columns the model was trained on
+    # Feature alignment — forces exactly the columns the model was trained on.
+    # Today's temperature_2m_max is kept (it is an input feature for the t+1
+    # forecast); the future target_temp_max is naturally excluded.
     if TRAIN_FEATURE_COLUMNS is not None:
         df = df.reindex(columns=TRAIN_FEATURE_COLUMNS, fill_value=0)
     elif "time" in df.columns:
@@ -128,11 +124,13 @@ def predict(
 
     preds = model.predict(X_scaled)
 
-    # Build output aligned to original input
+    # Build output aligned to original input. predicted_temp_max is the max
+    # temperature forecast for the next day (forecast_date = input day + 1);
+    # the input's temperature_2m_max stays as today's observed value.
     out = input_df.copy()
     out["predicted_temp_max"] = preds
-    if "temperature_2m_max" in out.columns:
-        out = out.rename(columns={"temperature_2m_max": "actual_temp_max"})
+    if "time" in out.columns:
+        out["forecast_date"] = pd.to_datetime(out["time"]) + pd.Timedelta(days=1)
 
     return out
 

@@ -19,7 +19,7 @@ MODELS_DIR = Path("models")
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 REGISTRY_MODEL_NAME = os.getenv("MLFLOW_BASELINE_MODEL_NAME", "weather-lasso-baseline")
 
-def load_and_preprocess(train_path, eval_path, target='temperature_2m_max'):
+def load_and_preprocess(train_path, eval_path, target='target_temp_max'):
     """Loads data and handles missing values for all advanced features."""
     train_df = pd.read_csv(train_path, index_col="time", parse_dates=True)
     eval_df = pd.read_csv(eval_path, index_col="time", parse_dates=True)
@@ -80,18 +80,16 @@ def go(alpha=0.1):
         mlflow.sklearn.log_model(model, artifact_path="model")
         mlflow.log_artifact(str(MODELS_DIR / "scaler.pkl"))
 
-        # Register and transition to Staging
+        # Register the baseline and tag it as challenger (mirrors the XGBoost
+        # pipeline). The baseline is for comparison only; it is never promoted
+        # to @champion for serving.
         model_uri = f"runs:/{run.info.run_id}/model"
         mv = mlflow.register_model(model_uri, REGISTRY_MODEL_NAME)
         client = mlflow.tracking.MlflowClient()
-        client.transition_model_version_stage(
-            name=REGISTRY_MODEL_NAME,
-            version=mv.version,
-            stage="Staging",
-        )
+        client.set_registered_model_alias(REGISTRY_MODEL_NAME, "challenger", mv.version)
 
         LOGGER.info(
-            f"Registered {REGISTRY_MODEL_NAME} v{mv.version} → Staging  "
+            f"Registered {REGISTRY_MODEL_NAME} v{mv.version} → @challenger  "
             f"(MAE: {metrics['mae']:.4f})"
         )
 

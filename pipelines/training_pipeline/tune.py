@@ -19,7 +19,7 @@ PROCESSED_DIR = Path("data/processed")
 MODELS_DIR = Path("models")
 REGISTRY_MODEL_NAME = os.getenv("MLFLOW_MODEL_NAME", "weather-xgb")
 
-def _load_and_prepare(train_path, eval_path, target='temperature_2m_max'):
+def _load_and_prepare(train_path, eval_path, target='target_temp_max'):
     train_df = pd.read_csv(train_path, index_col="time", parse_dates=True)
     eval_df = pd.read_csv(eval_path, index_col="time", parse_dates=True)
 
@@ -99,18 +99,18 @@ def tune_weather_model(n_trials: int = 30, experiment_name: str = "weather_xgb_l
         mlflow.xgboost.log_model(best_model, artifact_path="model")
         mlflow.log_artifact(str(MODELS_DIR / "tuned_scaler.pkl"))
 
-        # Register and transition to Staging
+        # Register the new version and mark it as the challenger. Promotion to
+        # @champion happens only after the evaluation gate passes (Airflow DAG).
         model_uri = f"runs:/{run.info.run_id}/model"
         mv = mlflow.register_model(model_uri, REGISTRY_MODEL_NAME)
         client = mlflow.tracking.MlflowClient()
-        client.transition_model_version_stage(
-            name=REGISTRY_MODEL_NAME,
-            version=mv.version,
-            stage="Staging",
+        client.set_registered_model_alias(REGISTRY_MODEL_NAME, "challenger", mv.version)
+        client.set_model_version_tag(
+            REGISTRY_MODEL_NAME, mv.version, "validation_status", "pending"
         )
 
         LOGGER.info(
-            f"Registered {REGISTRY_MODEL_NAME} v{mv.version} → Staging  "
+            f"Registered {REGISTRY_MODEL_NAME} v{mv.version} → @challenger  "
             f"(MAE: {final_metrics['mae']:.4f}  RMSE: {final_metrics['rmse']:.4f}  "
             f"R²: {final_metrics['r2']:.4f})"
         )

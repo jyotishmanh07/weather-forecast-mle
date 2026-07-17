@@ -2,34 +2,18 @@ import streamlit as st
 import pandas as pd
 import requests
 import plotly.express as px
-import boto3, os
+import os
 import yaml
 from pathlib import Path
 
 # ============================
-# 1. Config & AWS Setup
+# 1. Config
 # ============================
-# API_URL points to your local FastAPI server
+# API_URL points to the FastAPI server (the api Space, or local uvicorn).
 API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000/predict")
-S3_BUCKET = os.getenv("S3_BUCKET", "weather-forecast-data-mle")
-REGION = os.getenv("AWS_REGION", "eu-central-1")
 
-s3 = boto3.client("s3", region_name=REGION)
-
-def load_from_s3(key, local_path):
-    """Download weather artifacts from S3 if not cached."""
-    local_path = Path(local_path)
-    if not local_path.exists():
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-        st.info(f"📥 Downloading {key} from S3...")
-        s3.download_file(S3_BUCKET, key, str(local_path))
-    return str(local_path)
-
-# Ensure holdout data is available locally
-HOLDOUT_PATH = load_from_s3(
-    "processed/holdout_encoded.csv",
-    "data/processed/holdout_encoded.csv"
-)
+# Holdout features are versioned with DVC — fetch them with `dvc pull`.
+HOLDOUT_PATH = "data/processed/holdout_encoded.csv"
 
 # Load City Names from config.yaml
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -51,6 +35,9 @@ CITY_MAP = get_city_mapping()
 # ============================
 @st.cache_data
 def load_data():
+    if not Path(HOLDOUT_PATH).exists():
+        st.error(f"Holdout data not found at {HOLDOUT_PATH}. Run `dvc pull` or the feature pipeline first.")
+        st.stop()
     # Load the encoded features
     data = pd.read_csv(HOLDOUT_PATH)
     
@@ -128,29 +115,33 @@ if st.button("Generate Forecast 🚀"):
                 resp.raise_for_status()
                 out = resp.json()
                 
-                # Assign predictions and actuals from API response keys
+                # Next-day forecast from the API.
                 subset["prediction"] = out.get("predicted_max_temp")
-                # Fallback to check multiple possible actual column names
-                subset["actual"] = out.get("actual_max_temp", subset.get("temperature_2m_max"))
+                subset["forecast_date"] = pd.to_datetime(out.get("forecast_date"))
+                # The holdout already contains the realised next-day max
+                # (target_temp_max), so the forecast can be scored against it.
+                if "target_temp_max" in subset.columns:
+                    subset["actual"] = subset["target_temp_max"]
 
-                # Remove any rows where prediction might be missing
                 subset = subset.dropna(subset=["prediction"])
 
-                mae = (subset["prediction"] - subset["actual"]).abs().mean()
-                
-                st.subheader(f"Results for {CITY_MAP.get(selected_city_id, 'City ' + str(selected_city_id))}")
-                
+                st.subheader(f"Next-day forecast for {CITY_MAP.get(selected_city_id, 'City ' + str(selected_city_id))}")
+
+                has_actual = "actual" in subset.columns
+                mae = (subset["prediction"] - subset["actual"]).abs().mean() if has_actual else None
+                y_cols = ["actual", "prediction"] if has_actual else ["prediction"]
+
                 m1, m2 = st.columns(2)
                 with m1:
-                    st.metric("Mean Absolute Error", f"{mae:.2f}°C")
+                    st.metric("Mean Absolute Error", f"{mae:.2f}°C" if mae is not None else "n/a")
                 with m2:
-                    st.metric("Days Predicted", len(subset))
+                    st.metric("Days Forecast", len(subset))
 
-                # Plotly Visualization
+                # Plot the forecast (and realised actual when available) by forecast date.
                 fig = px.line(
-                    subset, x="time", y=["actual", "prediction"], markers=True,
-                    title=f"Actual vs Predicted Temp — {CITY_MAP.get(selected_city_id)}",
-                    labels={"value": "Temperature (°C)", "time": "Date"},
+                    subset, x="forecast_date", y=y_cols, markers=True,
+                    title=f"Next-day max temp — {CITY_MAP.get(selected_city_id)}",
+                    labels={"value": "Temperature (°C)", "forecast_date": "Forecast date"},
                     color_discrete_map={"actual": "#1f77b4", "prediction": "#ff7f0e"}
                 )
                 st.plotly_chart(fig, use_container_width=True)

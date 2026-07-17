@@ -39,6 +39,25 @@ def add_time_series_features(df: pd.DataFrame) -> pd.DataFrame:
     df[lag_cols] = df[lag_cols].fillna(0)
     return df
 
+def add_forecast_target(df: pd.DataFrame, horizon: int = 1) -> pd.DataFrame:
+    """Create the next-day forecast target.
+
+    The model forecasts a city's max temperature `horizon` day(s) ahead, so the
+    target is temperature_2m_max shifted backwards within each city. Today's
+    observed temperature_2m_max stays as a legitimate feature (it is known at
+    prediction time). Rows whose future target falls outside this split (the
+    last day per city) are dropped.
+
+    This is applied only in the training feature pipeline — never in
+    clean_weather_data, which the inference pipeline reuses on data that has no
+    future target to learn from.
+    """
+    df = df.reset_index()  # 'time' index -> column so we can sort by [city, time]
+    df = df.sort_values(['city', 'time'])
+    df['target_temp_max'] = df.groupby('city')['temperature_2m_max'].shift(-horizon)
+    df = df.dropna(subset=['target_temp_max'])
+    return df.set_index('time').sort_index()
+
 def clean_weather_data(df: pd.DataFrame) -> pd.DataFrame:
     if 'time' not in df.columns:
         df = df.reset_index().rename(columns={'index': 'time'})
@@ -73,6 +92,7 @@ def preprocess_splits(splits=("train", "eval", "holdout")):
         df = pd.read_csv(input_path)
         
         cleaned_df = clean_weather_data(df)
+        cleaned_df = add_forecast_target(cleaned_df)
 
         output_path = PROCESSED_DIR / f"{split}_processed.csv"
         cleaned_df.to_csv(output_path, index=True)

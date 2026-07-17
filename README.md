@@ -1,44 +1,38 @@
 # Weather Forecast MLE
 
-An end-to-end MLOps project that forecasts daily maximum temperature for five German cities using XGBoost, with experiment tracking, a model registry, data validation, drift monitoring, a REST API, an interactive dashboard, and automated CI/CD to AWS ECS.
+An end-to-end MLOps project that forecasts **next-day** maximum temperature for five German cities with XGBoost. The point of the project is the **operations**, not the model: a closed-loop retraining system with a no-regression promotion gate and rollback, experiment tracking + a model registry, data/Pandera validation, drift monitoring, a REST API, a dashboard, and CI/CD — all on a **free** stack you can run yourself.
+
+> Built to be cloned and run. No paid cloud account required: experiment tracking + storage on **DagsHub**, images on **GHCR**, the live demo on **Hugging Face Spaces**, and orchestration on a local **Apache Airflow**.
 
 ---
 
-## Architecture
-
-![End-to-end ML workflow: Load → Preprocess → Feature Engineering → Train/Tune → Pipelines → Containerize & CI/CD → Deploy → Frontend](mle_flowchart.png)
+## The closed loop (the part that matters)
 
 ```
-Open-Meteo Archive API
-        │
-        ▼
-┌──────────────────────────────────────────┐
-│            Feature Pipeline              │
-│  load → preprocess → feature_engineering │
-│          (Pandera schema validation)     │
-└──────────────────────────────────────────┘
-        │
-        ▼
-┌──────────────────────────────────────────┐
-│           Training Pipeline              │
-│  Lasso baseline + XGBoost (Optuna tuning)│
-│  └─ MLflow: experiments + Model Registry │
-└──────────────────────────────────────────┘
-        │  (Staging → Production)
-        ▼
-┌─────────────────────┐     ┌────────────────────────┐
-│   FastAPI  :8000    │────▶│  Streamlit UI  :8501   │
-│  /predict           │     │  (interactive charts)  │
-│  /health            │     └────────────────────────┘
-│  /metrics  ◀── Evidently drift report
-└─────────────────────┘
-        │
-        ▼                            Nightly cron
-Docker → Amazon ECR → ECS  ◀──  GitHub Actions retrain.yml
+                         Apache Airflow  (weather_retrain DAG)
+   ┌──────────────────────────────────────────────────────────────────────────┐
+   │ ingest → preprocess → feature_engineering → dvc push → train challenger     │
+   │                                                              │              │
+   │                                                     evaluate gate           │
+   │                                       challenger MAE ≤ 3.0  AND  ≤ champion? │
+   │                                          │ yes                 │ no         │
+   │                                  promote → @champion    keep current champion│
+   │                                  (snapshot last_known_good)                  │
+   └───────────────────────────────────────│──────────────────────────────────┘
+                                            ▼
+   DagsHub MLflow Registry  ──(@champion)──▶  FastAPI  :8000  ──▶  Streamlit :8501
+   (tracking + model registry)                /predict /health
+                                              /metrics (Prometheus)
+                                              /drift   (Evidently)  ──▶ drift breach
+                                                                        signals retrain
+
+   weather_rollback DAG (manual): re-point @champion → last_known_good
 ```
 
-**Cities:** Berlin, Munich, Hamburg, Frankfurt, Cologne  
-**Target:** `temperature_2m_max` (daily maximum temperature, °C)
+**Cities:** Berlin, Munich, Hamburg, Frankfurt, Cologne
+**Target:** next-day `temperature_2m_max` (daily maximum temperature, °C)
+
+> The committed `mle_flowchart.png` shows the previous AWS topology and is being refreshed — the diagram above is the current source of truth.
 
 ---
 
@@ -51,15 +45,18 @@ Docker → Amazon ECR → ECS  ◀──  GitHub Actions retrain.yml
 | Data validation | Pandera (`ProcessedWeatherSchema`) |
 | Model training | XGBoost + Lasso baseline |
 | Hyperparameter tuning | Optuna |
-| Experiment tracking | MLflow |
-| Model Registry | MLflow (Staging → Production stages) |
+| Experiment tracking + Model Registry | **MLflow on DagsHub** (champion/challenger **aliases**) |
+| Data & artifact versioning | **DVC** → DagsHub remote |
+| Orchestration + retraining | **Apache Airflow** (docker-compose) |
 | API validation | Pydantic v2 (`WeatherInput`, `PredictionResponse`) |
-| Drift monitoring | Evidently (K-S + chi-square, `/metrics` endpoint) |
+| Drift monitoring | Evidently (K-S + chi-square, `/drift`) |
+| App metrics | Prometheus (`/metrics`) |
 | Model serving | FastAPI |
 | UI | Streamlit + Plotly |
-| Artifact storage | AWS S3 |
 | Containerisation | Docker + docker-compose |
-| CI/CD | GitHub Actions → ECR → ECS |
+| Container registry | **GitHub Container Registry (GHCR)** |
+| Live demo / hosting | **Hugging Face Spaces** (Docker) |
+| CI/CD | GitHub Actions → GHCR → Hugging Face Spaces |
 
 ---
 
@@ -69,33 +66,38 @@ Docker → Amazon ECR → ECS  ◀──  GitHub Actions retrain.yml
 .
 ├── pipelines/
 │   ├── feature_pipeline/
-│   │   ├── load.py               # Open-Meteo API ingestion
-│   │   ├── preprocess.py         # cleaning, lag/rolling features
+│   │   ├── load.py               # Open-Meteo API ingestion + chronological split
+│   │   ├── preprocess.py         # cleaning, lag/rolling features, next-day target
 │   │   ├── feature_engineering.py# one-hot encoding, Pandera validation
 │   │   └── schemas.py            # ProcessedWeatherSchema (Pandera)
 │   ├── training_pipeline/
-│   │   ├── train.py              # Lasso baseline → MLflow Registry
-│   │   └── tune.py               # XGBoost + Optuna → MLflow Registry
+│   │   ├── train.py              # Lasso baseline → MLflow registry
+│   │   └── tune.py               # XGBoost + Optuna → registry (@challenger)
 │   ├── inference_pipeline/
-│   │   └── inference.py          # full preprocess → predict pipeline
+│   │   └── inference.py          # full preprocess → predict; loads @champion
 │   └── monitoring_pipeline/
 │       └── drift.py              # Evidently drift check, prediction logger
+├── airflow/
+│   ├── docker-compose.airflow.yml# local Airflow (Postgres + LocalExecutor)
+│   ├── Dockerfile.airflow        # Airflow base + app runtime deps
+│   ├── dags/
+│   │   ├── weather_retrain_dag.py# closed-loop retrain + gated promotion
+│   │   └── weather_rollback_dag.py# manual champion rollback
+│   └── README.md                 # Airflow runbook
+├── spaces/                       # Hugging Face Space configs (api + ui)
 ├── tests/                        # pytest unit + integration tests
-├── data/
-│   ├── raw/                      # train / eval / holdout CSVs
-│   └── processed/                # encoded CSVs ready for modelling
-├── models/                       # local .pkl fallback (dev only)
+├── data/                         # DVC-tracked (raw/ + processed/); fetch with `dvc pull`
+├── models/                       # local .pkl fallback (offline dev)
 ├── main.py                       # FastAPI app
 ├── app.py                        # Streamlit dashboard
 ├── config.yaml                   # city coords, API config
+├── requirements-pipeline.txt     # app deps for the Airflow image
 ├── Dockerfile                    # API image
 ├── Dockerfile.streamlit          # UI image
-├── Dockerfile.mlflow             # MLflow tracking server (local dev)
-├── docker-compose.yml            # full local stack (mlflow + api + ui)
+├── docker-compose.yml            # local API + UI (MLflow is hosted on DagsHub)
 ├── .env.example                  # required environment variables
 └── .github/workflows/
-    ├── mlops.yml                 # CI: test → build → deploy on push to main
-    └── retrain.yml               # nightly retraining + evaluation gate
+    └── mlops.yml                 # CI: test → build to GHCR → deploy to HF Spaces
 ```
 
 ---
@@ -106,7 +108,7 @@ Docker → Amazon ECR → ECS  ◀──  GitHub Actions retrain.yml
 
 - Python 3.12
 - [uv](https://docs.astral.sh/uv/) (`pip install uv`)
-- AWS credentials with S3 read access (for model artifacts)
+- A free [DagsHub](https://dagshub.com) account (hosted MLflow + DVC remote)
 
 ### Install
 
@@ -114,20 +116,34 @@ Docker → Amazon ECR → ECS  ◀──  GitHub Actions retrain.yml
 uv sync
 ```
 
-### Run the full pipeline locally
+### Configure
 
 ```bash
-# 1. Ingest raw data and build features
+cp .env.example .env.local      # fill in your DagsHub MLflow URI + token
+```
+
+Point the DVC remote at your DagsHub repo and pull the datasets:
+
+```bash
+# one-time: replace USERNAME in .dvc/config, then add credentials locally
+dvc remote modify origin --local auth basic
+dvc remote modify origin --local user  <DAGSHUB_USER>
+dvc remote modify origin --local password <DAGSHUB_TOKEN>
+dvc pull                         # fetches data/raw + data/processed
+```
+
+### Run the pipeline locally
+
+```bash
+# 1. Ingest raw data and build features (writes the next-day target)
 python -m pipelines.feature_pipeline.load
 python -m pipelines.feature_pipeline.preprocess
 python -m pipelines.feature_pipeline.feature_engineering
 
-# 2. Train and tune (logs to MLflow, registers in Model Registry)
-python -m pipelines.training_pipeline.tune
+# 2. Tune + register a challenger in the DagsHub MLflow registry
+python -m pipelines.training_pipeline.tune --n-trials 30
 
-# 3. View experiments
-mlflow ui --backend-store-uri sqlite:///mlflow.db
-# open http://localhost:5000
+# 3. View experiments in the DagsHub MLflow UI (your repo's .mlflow URL)
 ```
 
 ### Start the API and UI
@@ -144,20 +160,19 @@ streamlit run app.py
 
 ## Local Full-Stack with Docker Compose
 
-Brings up MLflow tracking server, FastAPI, and Streamlit with one command — no AWS credentials required for local development.
+Brings up FastAPI and Streamlit (MLflow tracking is hosted on DagsHub, so there's no local MLflow container to run):
 
 ```bash
-cp .env.example .env.local   # fill in your values (AWS optional for local)
+cp .env.example .env.local       # DagsHub MLflow creds
 docker-compose up --build
 ```
 
 | Service | URL |
 |---|---|
-| MLflow UI | http://localhost:5000 |
 | API (Swagger) | http://localhost:8000/docs |
 | Streamlit | http://localhost:8501 |
 
-Local volumes are mounted so model artifacts and processed data are read from your working directory without pulling from S3.
+The API loads its model from the registry; `./models` is mounted read-only as an offline fallback.
 
 ---
 
@@ -166,21 +181,24 @@ Local volumes are mounted so model artifacts and processed data are read from yo
 ### `GET /health`
 
 ```json
-{ "status": "healthy", "model_version": "weather-xgb/v3 (Production)" }
+{ "status": "healthy", "model_version": "weather-xgb/v3 (@champion)" }
 ```
 
 ### `GET /metrics`
 
-Runs an Evidently drift check comparing the training distribution against recent prediction inputs. Returns per-column K-S / chi-square p-values.
+Prometheus exposition format — HTTP request latency/counts plus `predictions_total{model_version=...}` and a `predicted_temp_max_celsius` summary. Point Prometheus/Grafana here.
+
+### `GET /drift`
+
+Runs an Evidently drift check comparing the training distribution against recent prediction inputs. Returns per-column K-S / chi-square p-values; a breach (`dataset_drifted: true`) is logged as the signal to retrain.
 
 ```json
 {
-  "model_version": "weather-xgb/v3 (Production)",
+  "model_version": "weather-xgb/v3 (@champion)",
   "reference_rows": 1755,
   "current_rows": 320,
   "dataset_drifted": false,
   "drifted_column_count": 0,
-  "drifted_column_share": 0.0,
   "columns": {
     "temperature_2m_min": { "drift_score": 0.42, "threshold": 0.05, "method": "ks", "drifted": false },
     "precipitation_sum":  { "drift_score": 0.71, "threshold": 0.05, "method": "ks", "drifted": false },
@@ -191,7 +209,7 @@ Runs an Evidently drift check comparing the training distribution against recent
 
 ### `POST /predict`
 
-Accepts a JSON array of `WeatherInput` objects. All fields are validated by Pydantic — invalid weathercodes, out-of-range temperatures, or `max < min` are rejected with a `422` before reaching the model.
+Accepts a JSON array of `WeatherInput` objects (today's observations) and returns the **next-day** max-temperature forecast for each, with the `forecast_date` it applies to. All fields are Pydantic-validated; invalid weathercodes, out-of-range temperatures, or `max < min` are rejected with `422` before reaching the model.
 
 ```bash
 curl -X POST http://localhost:8000/predict \
@@ -212,9 +230,9 @@ curl -X POST http://localhost:8000/predict \
 {
   "city": [1],
   "time": ["2024-06-01"],
+  "forecast_date": ["2024-06-02"],
   "predicted_max_temp": [21.8],
-  "actual_max_temp": [22.5],
-  "model_version": "weather-xgb/v3 (Production)"
+  "model_version": "weather-xgb/v3 (@champion)"
 }
 ```
 
@@ -222,93 +240,112 @@ curl -X POST http://localhost:8000/predict \
 
 | Field | Type | Constraints |
 |---|---|---|
-| `time` | datetime | ISO 8601 |
+| `time` | datetime | ISO 8601 (the observation day) |
 | `city` | int | 1–10 |
 | `weathercode` | int | WMO codes only |
 | `temperature_2m_min` | float | −30 to 45 °C |
-| `temperature_2m_max` | float | optional, −30 to 45 °C, must be ≥ min |
+| `temperature_2m_max` | float | −30 to 45 °C, must be ≥ min — today's observed max, used as a feature |
 | `precipitation_sum` | float | 0–60 mm |
 
-Full schema available at `/docs` (Swagger UI).
+Full schema at `/docs` (Swagger UI).
 
 ---
 
-## MLflow Model Registry
+## Forecasting target (no leakage)
 
-Models are registered automatically at the end of each training run and promoted to **Staging**. Promotion to **Production** happens either manually or via the nightly retraining workflow after the evaluation gate passes.
+The model predicts the **next day's** max temperature. The target is
+`temperature_2m_max` shifted backwards one day within each city
+(`groupby('city').shift(-1)`), built in `preprocess.add_forecast_target`. Today's
+observed `temperature_2m_max` remains a *legitimate feature* (it is known at
+prediction time) — only the **target** is in the future. The leakage assertion in
+`tests/test_feature.py` guards this contract.
+
+Other leakage protections (unchanged):
+
+- **Chronological splits** — train ≤ *T−10d*, eval *T−10…T−5*, holdout last 5d (`load.py`).
+- **Per-city lag features** — `lag_temp_{1,3,7}d` use `groupby('city').shift()`.
+- **Shifted rolling windows** — `rolling_temp_7d_*` use `.rolling(7)…shift(1)`.
+- **Fit on train only** — `StandardScaler` is fit on train and persisted with the model.
+
+---
+
+## Model Registry — champion / challenger
+
+The registry uses **aliases** (the modern replacement for deprecated stages):
+
+- `tune.py` registers each new version and sets `@challenger` + tag `validation_status=pending`.
+- The Airflow gate promotes a challenger to `@champion` only if it passes (below).
+- The API loads `models:/weather-xgb@champion`, falling back to `@challenger`, then a local `.pkl`.
 
 ```python
-# Manual promotion
+# Manual promotion (normally done by the retrain DAG)
 from mlflow.tracking import MlflowClient
 client = MlflowClient()
-client.transition_model_version_stage(
-    name="weather-xgb", version=3, stage="Production"
-)
-```
-
-At startup, the API loads the **Production** model from the registry, falling back to **Staging**, then to S3, then to local `.pkl` files.
-
----
-
-## Data Validation
-
-The feature pipeline validates every dataset split against `ProcessedWeatherSchema` (Pandera) before encoding. Validation is lazy — all failing rows and checks are collected before raising, so you see the full picture in one error:
-
-```
-[Train] Schema validation failed:
-  check                column              failure_case  index
-  isin([0,1,2,...])    weathercode         999           42
-  ge=-30, le=45        temperature_2m_max  52.1          107
+v = client.get_model_version_by_alias("weather-xgb", "challenger")
+client.set_registered_model_alias("weather-xgb", "champion", v.version)
 ```
 
 ---
 
-## Data Leakage Prevention
+## Retraining & the promotion gate (Airflow)
 
-Splits and features are constructed so nothing from the future reaches training:
+`airflow/dags/weather_retrain_dag.py` (manual trigger while the stack is being
+verified; designed to run nightly at 02:00):
 
-- **Chronological splits** — the 360-day ingestion window is split by date, never at random: train = everything up to *T−10 days*, eval = days *T−10…T−5*, holdout = the most recent 5 days (`load.py`).
-- **Per-city lag features** — `lag_temp_{1,3,7}d` use `groupby('city').shift()`, so a feature value can only come from that city's own past.
-- **Shifted rolling windows** — `rolling_temp_7d_mean/std` are computed with `.rolling(7)…shift(1)`, so a day's target never contributes to its own features.
-- **Clean before engineering** — duplicates and rows missing the target are dropped *before* lag/rolling computation, so features are never derived from bad rows.
-- **Fit on train only** — the `StandardScaler` is fit on the training split and only applied to eval/holdout; the fitted scaler is persisted next to the model so serving applies the identical transform.
+```
+ingest → preprocess → feature_engineering → dvc_push → train_challenger
+        → evaluate_gate ──(pass)→ promote_champion → trigger_redeploy
+                        └─(fail)→ notify_no_promote   (current champion retained)
+```
+
+**No-regression gate:** the new `@challenger` is scored on the fresh holdout and
+promoted **only if** its MAE ≤ 3.0 **and** (no champion yet **or** its MAE ≤ the
+current `@champion`'s MAE on the same data). A worse model is never promoted.
+Before re-pointing, the outgoing champion's version is saved as the
+`last_known_good` registered-model tag.
+
+Run it locally:
+
+```bash
+cp airflow/.env.example airflow/.env        # AIRFLOW_UID + DagsHub creds
+docker compose -f airflow/docker-compose.airflow.yml up -d --build
+# open http://localhost:8080, trigger the `weather_retrain` DAG
+```
+
+See [airflow/README.md](airflow/README.md) for details.
+
+### Rollback runbook
+
+If a promoted model misbehaves in production, trigger the **`weather_rollback`**
+DAG from the Airflow UI. It re-points `@champion` back to the `last_known_good`
+version and tags it `validation_status=rolled_back`. Restart the serving layer
+(HF Space) so it reloads the reverted champion.
+
+---
+
+## Data versioning (DVC)
+
+`data/raw` and `data/processed` are tracked with DVC and stored on the DagsHub
+remote, not in git. `dvc pull` fetches them; the retrain DAG runs `dvc push`
+after each ingest, so every run's data snapshot is reproducible and reversible
+(this replaces the old S3 dated-archive). Credentials live in the gitignored
+`.dvc/config.local`.
 
 ---
 
 ## Drift Monitoring
 
-Every call to `/predict` logs the raw input features (`weathercode`, `temperature_2m_min`, `precipitation_sum`) to `data/prediction_log.csv`. The `/metrics` endpoint compares the last 500 logged rows against the training distribution using Evidently:
+Every `/predict` call logs raw input features (`weathercode`,
+`temperature_2m_min`, `precipitation_sum`) to `data/prediction_log.csv`. `/drift`
+compares the last 500 logged rows against the training distribution with Evidently:
 
-- **Numerical columns** — Kolmogorov-Smirnov test (p < 0.05 = drift)
-- **Categorical columns** — chi-square test (p < 0.05 = drift)
-- **Dataset drifted** — true if ≥ 50% of monitored columns show drift
+- **Numerical** — Kolmogorov-Smirnov (p < 0.05 = drift)
+- **Categorical** — chi-square (p < 0.05 = drift)
+- **Dataset drifted** — true if ≥ 50% of monitored columns drift
 
-When `dataset_drifted` is true, the nightly retraining workflow can be triggered manually via `workflow_dispatch` to retrain on fresh data.
-
----
-
-## Cloud Infrastructure & Deployment
-
-| Resource | Name | Purpose |
-|---|---|---|
-| ECR repositories | `weather-api`, `weather-ui` | Images tagged with commit SHA + `latest` |
-| ECS cluster | `weather-cluster-ecs` | Fargate services `weather-api-service` (:8000) and `weather-ui-service` (:8501) |
-| S3 bucket | `$S3_BUCKET` | Model and data artifacts |
-
-**S3 bucket layout:**
-
-```
-s3://$S3_BUCKET/
-├── models/                  # production artifacts — downloaded by the API at startup
-│   ├── best_weather_xgb.pkl
-│   └── tuned_scaler.pkl
-├── processed/               # encoded datasets
-└── retrain/<YYYY-MM-DD>/    # nightly archive: that night's model + raw/processed data
-```
-
-Containers ship without model weights (`models/` is dockerignored). At startup the API resolves a model in this order: MLflow Registry **Production** → **Staging** → S3 `models/` → local `.pkl` — so shipping a new model never requires rebuilding an image.
-
-**Required GitHub Actions secrets:** `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `S3_BUCKET`, `MLFLOW_TRACKING_URI`
+A breach is logged as a warning and is the signal to trigger the retrain DAG
+(locally a manual/REST trigger; a hosted scheduler would use a webhook). Full
+HTML reports are written to `reports/` via `drift.save_drift_report_html()`.
 
 ---
 
@@ -316,26 +353,24 @@ Containers ship without model weights (`models/` is dockerignored). At startup t
 
 ### On push to `main` (`mlops.yml`)
 
-1. Run `pytest tests/` — build is blocked if tests fail
-2. Build and push `weather-api` and `weather-ui` images to Amazon ECR
-3. Force-redeploy both services on the `weather-cluster-ecs` ECS cluster
+1. `test` — run `pytest tests/`; the build is blocked if tests fail.
+2. `build` — build `weather-api` (`Dockerfile`) and `weather-ui`
+   (`Dockerfile.streamlit`) and push to **GHCR**
+   (`ghcr.io/<owner>/weather-{api,ui}`), tagged with the commit SHA + `latest`.
+3. `deploy` — push the repo to each **Hugging Face Space** git remote so the live
+   demo redeploys. See [spaces/README.md](spaces/README.md) for one-time setup.
 
-### Nightly retraining (`retrain.yml`)
+**Scheduled retraining** is owned by the Airflow scheduler, not GitHub Actions.
 
-Runs at **02:00 UTC** daily (also triggerable manually via `workflow_dispatch`):
-
-1. Run the full feature pipeline (fresh data from Open-Meteo)
-2. Tune XGBoost with Optuna, register new version in MLflow Registry → Staging
-3. Evaluate against holdout — if MAE passes threshold, promote to Production
-4. Publish the new model to S3 (`models/`) and archive the night's model + data under `retrain/<date>/` for rollback/reproducibility
-5. Trigger ECS redeployment — restarted containers download the fresh model from S3 at startup
+**Required GitHub config:** secret `HF_TOKEN`, variable `HF_USERNAME`. GHCR uses the
+built-in `GITHUB_TOKEN`. (No more AWS secrets.)
 
 ---
 
 ## Common Commands
 
 ```bash
-# Run the test suite (same gate CI uses before deploying)
+# Run the test suite (same gate CI uses)
 pytest tests/ -v
 
 # Train the Lasso baseline
@@ -348,20 +383,31 @@ python -m pipelines.training_pipeline.tune --n-trials 50
 python -m pipelines.inference_pipeline.inference \
   --input data/raw/holdout.csv --output data/predictions.csv
 
-# Full local stack (MLflow + API + UI)
+# Local API + UI
 docker-compose up --build
 
-# Trigger the nightly retraining manually (requires gh CLI)
-gh workflow run retrain.yml -f n_trials=30
+# Local Airflow (closed-loop retraining)
+docker compose -f airflow/docker-compose.airflow.yml up -d --build
 ```
+
+---
+
+## Future work (deliberately out of scope)
+
+Scoped, not gaps — the current build is intentionally lean:
+
+- **Multi-horizon forecasting** (h = 1..7) with rolling-origin backtesting and prediction intervals.
+- **Grafana** dashboards over the Prometheus `/metrics` endpoint.
+- **Feature store** and **streaming ingest** instead of batch CSVs.
+- **Kubernetes / IaC** and **shadow / A-B** traffic splitting for safer rollouts.
 
 ---
 
 ## Key Design Patterns
 
-- **Modular pipelines** — every stage is an independently runnable module (`python -m pipelines.<pipeline>.<step>`); the nightly workflow, tests, and local dev all compose the same building blocks.
-- **S3-first model storage** — images contain code only; model weights are pulled at startup, decoupling model releases from image builds.
-- **Validation gates at every boundary** — Pandera schemas between pipeline stages, Pydantic at the API edge, and an MAE threshold gate before any model is promoted to Production.
-- **Train/serve symmetry** — the fitted scaler and encoding logic are persisted with the model and reapplied verbatim at inference time, so serving sees exactly the transforms training saw.
-
-
+- **Closed-loop ops** — retraining, a no-regression promotion gate, and rollback are automated, not manual.
+- **Registry-first serving** — images contain code only; the model is resolved from the registry (`@champion`) at startup, decoupling model releases from image builds.
+- **Validation gates at every boundary** — Pandera between pipeline stages, Pydantic at the API edge, an MAE gate before any promotion.
+- **Train/serve symmetry** — the fitted scaler and encoding are persisted with the model and reapplied verbatim at inference time.
+- **Reproducibility** — data and model artifacts are versioned (DVC + MLflow), so any run can be reproduced or rolled back.
+```

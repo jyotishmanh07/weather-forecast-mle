@@ -1,0 +1,16 @@
+# Non-Airflow runtime deps for the weather pipelines, installed INTO the custom
+# Airflow image (airflow/Dockerfile.airflow) so Airflow's own constraints don't
+# clash with the app's hard pins. Versions mirror pyproject.toml.
+pandas==2.1.1
+numpy==1.26.4
+xgboost==3.2.0
+scikit-learn>=1.7.1
+mlflow>=3.3.1
+optuna>=4.5.0
+evidently>=0.7.12
+pandera>=0.20
+joblib>=1.5.3,<2.0.0
+dagshub
+dvc[s3]
+pyyaml
+category-encoders>=2.8.1

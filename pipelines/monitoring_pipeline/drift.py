@@ -126,7 +126,7 @@ def run_drift_check(
     return result
 
 
-def save_drift_report_html(output_path: str | Path = "drift_report.html") -> Path:
+def save_drift_report_html(output_path: str | Path = "reports/drift_report.html") -> Path:
     """Generate and save a full Evidently HTML drift report."""
     warnings.filterwarnings("ignore")
 
@@ -147,6 +147,7 @@ def save_drift_report_html(output_path: str | Path = "drift_report.html") -> Pat
     run = report.run(reference_data=ref_ds, current_data=cur_ds)
 
     output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     run.save_html(str(output_path))
     LOGGER.info(f"Drift report saved to {output_path}")
     return output_path
