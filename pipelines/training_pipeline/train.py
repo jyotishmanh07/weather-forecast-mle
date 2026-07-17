@@ -1,4 +1,5 @@
 import os
+import tempfile
 import pandas as pd
 import numpy as np
 import logging
@@ -76,16 +77,29 @@ def go(alpha=0.1):
         joblib.dump(model, MODELS_DIR / "weather_model.pkl")
         joblib.dump(scaler, MODELS_DIR / "scaler.pkl")
 
-        # Log model + scaler as MLflow artifacts
-        mlflow.sklearn.log_model(model, artifact_path="model")
+        # Log model + scaler as plain run artifacts. MLflow 3's log_model()
+        # creates a LoggedModel entity that remote registries like DagsHub can't
+        # resolve at registration time, so save the MLmodel directory locally
+        # and attach it to the run instead.
+        with tempfile.TemporaryDirectory() as tmp:
+            model_dir = Path(tmp) / "model"
+            mlflow.sklearn.save_model(model, path=str(model_dir))
+            mlflow.log_artifacts(str(model_dir), artifact_path="model")
         mlflow.log_artifact(str(MODELS_DIR / "scaler.pkl"))
 
         # Register the baseline and tag it as challenger (mirrors the XGBoost
         # pipeline). The baseline is for comparison only; it is never promoted
         # to @champion for serving.
-        model_uri = f"runs:/{run.info.run_id}/model"
-        mv = mlflow.register_model(model_uri, REGISTRY_MODEL_NAME)
         client = mlflow.tracking.MlflowClient()
+        try:
+            client.create_registered_model(REGISTRY_MODEL_NAME)
+        except Exception:
+            pass  # already exists
+        mv = client.create_model_version(
+            REGISTRY_MODEL_NAME,
+            source=f"runs:/{run.info.run_id}/model",
+            run_id=run.info.run_id,
+        )
         client.set_registered_model_alias(REGISTRY_MODEL_NAME, "challenger", mv.version)
 
         LOGGER.info(

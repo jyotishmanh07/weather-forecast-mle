@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 import os
+import tempfile
 import joblib
 import mlflow
 import mlflow.xgboost
@@ -95,15 +96,28 @@ def tune_weather_model(n_trials: int = 30, experiment_name: str = "weather_xgb_l
         joblib.dump(best_model, MODELS_DIR / "best_weather_xgb.pkl")
         joblib.dump(scaler, MODELS_DIR / "tuned_scaler.pkl")
 
-        # Log model + scaler as MLflow artifacts
-        mlflow.xgboost.log_model(best_model, artifact_path="model")
+        # Log model + scaler as plain run artifacts. MLflow 3's log_model()
+        # creates a LoggedModel entity that remote registries like DagsHub can't
+        # resolve at registration time, so save the MLmodel directory locally
+        # and attach it to the run instead.
+        with tempfile.TemporaryDirectory() as tmp:
+            model_dir = Path(tmp) / "model"
+            mlflow.xgboost.save_model(best_model, path=str(model_dir))
+            mlflow.log_artifacts(str(model_dir), artifact_path="model")
         mlflow.log_artifact(str(MODELS_DIR / "tuned_scaler.pkl"))
 
         # Register the new version and mark it as the challenger. Promotion to
         # @champion happens only after the evaluation gate passes (Airflow DAG).
-        model_uri = f"runs:/{run.info.run_id}/model"
-        mv = mlflow.register_model(model_uri, REGISTRY_MODEL_NAME)
         client = mlflow.tracking.MlflowClient()
+        try:
+            client.create_registered_model(REGISTRY_MODEL_NAME)
+        except Exception:
+            pass  # already exists
+        mv = client.create_model_version(
+            REGISTRY_MODEL_NAME,
+            source=f"runs:/{run.info.run_id}/model",
+            run_id=run.info.run_id,
+        )
         client.set_registered_model_alias(REGISTRY_MODEL_NAME, "challenger", mv.version)
         client.set_model_version_tag(
             REGISTRY_MODEL_NAME, mv.version, "validation_status", "pending"
