@@ -20,6 +20,11 @@ def _valid_processed_row() -> pd.DataFrame:
         'temperature_2m_max': [10.0],
         'temperature_2m_min': [5.0],
         'precipitation_sum': [0.0],
+        'pressure_msl_mean': [1013.0],
+        'wind_speed_10m_max': [15.0],
+        'relative_humidity_2m_mean': [70.0],
+        'cloud_cover_mean': [50.0],
+        'pressure_change_1d': [-2.0],
         'lag_temp_1d': [9.0],
         'lag_temp_3d': [8.0],
         'lag_temp_7d': [7.0],
@@ -45,9 +50,10 @@ def test_clean_weather_data_logic():
     assert isinstance(cleaned.index, pd.DatetimeIndex)
     assert cleaned.index[0] == pd.Timestamp('2026-01-01')
     
-    # Check feature engineering from notebook
-    assert 'month-day' in cleaned.columns
-    assert cleaned.loc['2026-01-01', 'month-day'] == 1.01
+    # Cyclical season encoding: both components present and on the unit circle.
+    assert 'season_sin' in cleaned.columns and 'season_cos' in cleaned.columns
+    assert abs(cleaned.loc['2026-01-01', 'season_sin']**2
+               + cleaned.loc['2026-01-01', 'season_cos']**2 - 1.0) < 1e-9
 
 def test_clean_weather_data_deduplication():
     """Confirms duplicates and NaNs are removed."""
@@ -62,26 +68,32 @@ def test_clean_weather_data_deduplication():
     assert len(cleaned) == 1
 
 def test_add_forecast_target_no_leakage():
-    """target_temp_max must be the NEXT day's max (strictly future) per city,
-    never the same-day value — this is the anti-leakage contract."""
+    """target_temp_max must be the max at time + horizon days (strictly future)
+    per city, never the same-day value — this is the anti-leakage contract."""
+    dates = ['2026-01-01', '2026-01-02', '2026-01-03', '2026-01-04', '2026-01-05']
+    maxes = [10.0, 11.0, 12.0, 13.0, 14.0]
     df = pd.DataFrame({
-        'time': ['2026-01-01', '2026-01-02', '2026-01-03'],
-        'city': [1, 1, 1],
-        'weathercode': [0, 0, 0],
-        'temperature_2m_max': [10.0, 11.0, 12.0],
-        'temperature_2m_min': [1.0, 2.0, 3.0],
-        'precipitation_sum': [0.0, 0.0, 0.0],
+        'time': dates,
+        'city': [1] * 5,
+        'weathercode': [0] * 5,
+        'temperature_2m_max': maxes,
+        'temperature_2m_min': [1.0] * 5,
+        'precipitation_sum': [0.0] * 5,
     })
 
-    out = add_forecast_target(clean_weather_data(df))
+    out = add_forecast_target(clean_weather_data(df)).reset_index()
 
-    # The last day per city has no next-day target and is dropped.
-    assert len(out) == 2
-    # Each row carries the FOLLOWING day's max as its target.
-    assert out.loc['2026-01-01', 'target_temp_max'] == 11.0
-    assert out.loc['2026-01-02', 'target_temp_max'] == 12.0
+    # 5 days -> h1: 4 rows, h2: 3 rows, h3: 2 rows (future targets only).
+    assert len(out) == 9
+    assert sorted(out['horizon'].unique()) == [1, 2, 3]
+
+    # Every row's target equals the observed max exactly `horizon` days later.
+    by_date = dict(zip(pd.to_datetime(dates), maxes))
+    for _, r in out.iterrows():
+        future_day = r['time'] + pd.to_timedelta(r['horizon'], unit='D')
+        assert r['target_temp_max'] == by_date[future_day]
+
     # Today's observed max is preserved as a feature (distinct from the target).
-    assert out.loc['2026-01-01', 'temperature_2m_max'] == 10.0
     assert (out['target_temp_max'] != out['temperature_2m_max']).all()
 
 # ===============================

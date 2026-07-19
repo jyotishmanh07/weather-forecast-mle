@@ -19,7 +19,7 @@ import mlflow.xgboost
 from mlflow.tracking import MlflowClient
 
 # Import internal modules
-from pipelines.feature_pipeline.preprocess import clean_weather_data
+from pipelines.feature_pipeline.preprocess import clean_weather_data, FORECAST_HORIZONS
 from pipelines.feature_pipeline.feature_engineering import validate_weather_data, encode_features
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -107,8 +107,17 @@ def predict(
     # Encoding (City One-Hot Encoding)
     df = encode_features(df)
 
+    # One copy of the feature frame per forecast horizon (t+1 .. t+3), with the
+    # horizon as an explicit feature — mirrors how training rows are built.
+    frames = []
+    for h in FORECAST_HORIZONS:
+        fh = df.copy()
+        fh["horizon"] = h
+        frames.append(fh)
+    df = pd.concat(frames, ignore_index=True)
+
     # Feature alignment — forces exactly the columns the model was trained on.
-    # Today's temperature_2m_max is kept (it is an input feature for the t+1
+    # Today's temperature_2m_max is kept (it is an input feature for the
     # forecast); the future target_temp_max is naturally excluded.
     if TRAIN_FEATURE_COLUMNS is not None:
         df = df.reindex(columns=TRAIN_FEATURE_COLUMNS, fill_value=0)
@@ -124,15 +133,20 @@ def predict(
 
     preds = model.predict(X_scaled)
 
-    # Build output aligned to original input. predicted_temp_max is the max
-    # temperature forecast for the next day (forecast_date = input day + 1);
-    # the input's temperature_2m_max stays as today's observed value.
-    out = input_df.copy()
-    out["predicted_temp_max"] = preds
-    if "time" in out.columns:
-        out["forecast_date"] = pd.to_datetime(out["time"]) + pd.Timedelta(days=1)
+    # Build output aligned to original input: one row per (input row, horizon).
+    # predicted_temp_max is the max-temperature forecast for forecast_date =
+    # input day + horizon; the input's temperature_2m_max stays today's value.
+    n = len(input_df)
+    outs = []
+    for i, h in enumerate(FORECAST_HORIZONS):
+        o = input_df.copy()
+        o["horizon"] = h
+        o["predicted_temp_max"] = preds[i * n:(i + 1) * n]
+        if "time" in o.columns:
+            o["forecast_date"] = pd.to_datetime(o["time"]) + pd.to_timedelta(h, unit="D")
+        outs.append(o)
 
-    return out
+    return pd.concat(outs, ignore_index=True)
 
 if __name__ == "__main__":
     # Standard CLI runner logic

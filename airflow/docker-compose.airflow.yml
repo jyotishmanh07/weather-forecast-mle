@@ -84,22 +84,18 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
-  # One-shot: run DB migrations and create the default admin user.
+  # One-shot: run DB migrations and create the default admin user. The official
+  # entrypoint does both when the _AIRFLOW_* flags are set (and it handles
+  # running as an arbitrary host uid, which a bash entrypoint override doesn't).
   airflow-init:
     <<: *airflow-common
-    entrypoint: /bin/bash
-    command:
-      - -c
-      - |
-        airflow db migrate
-        airflow users create \
-          --username airflow --password airflow \
-          --firstname air --lastname flow \
-          --role Admin --email airflow@example.com || true
+    command: version
     environment:
       <<: *airflow-common-env
       _AIRFLOW_DB_MIGRATE: "true"
       _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: airflow
+      _AIRFLOW_WWW_USER_PASSWORD: airflow
 
 volumes:
   postgres-db-volume:

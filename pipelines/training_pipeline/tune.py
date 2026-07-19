@@ -88,6 +88,11 @@ def tune_weather_model(n_trials: int = 30, experiment_name: str = "weather_xgb_l
             "rmse": np.sqrt(mean_squared_error(y_eval, preds)),
             "r2": r2_score(y_eval, preds),
         }
+        # Per-horizon MAE (t+1 .. t+3) so degradation with lead time is visible.
+        if "horizon" in X_eval.columns:
+            for h in sorted(X_eval["horizon"].unique()):
+                m = (X_eval["horizon"] == h).values
+                final_metrics[f"mae_h{int(h)}"] = mean_absolute_error(y_eval[m], preds[m])
         mlflow.log_params({**study.best_params, "n_trials": n_trials})
         mlflow.log_metrics(final_metrics)
 

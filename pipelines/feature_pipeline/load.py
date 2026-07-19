@@ -4,6 +4,7 @@ and split it into Train, Eval, and Holdout sets.
 """
 import http.client
 import json
+import time
 import yaml
 import pandas as pd
 import logging
@@ -24,7 +25,9 @@ def fetch_weather_data(config):
     conn = http.client.HTTPSConnection(hostname)
 
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=360)
+    # 5 years of history: the model sees each season ~5 times instead of once,
+    # which measurably reduces its tendency to damp seasonal extremes.
+    start_date = end_date - timedelta(days=1825)
     
     LOGGER.info(f"Ingesting data from {start_date.date()} to {end_date.date()}")
     
@@ -36,19 +39,35 @@ def fetch_weather_data(config):
         
         LOGGER.info(f"Fetching data for City ID: {city_id}")
         
+        # Atmospheric variables (pressure, wind, humidity, cloud) carry the
+        # front-arrival signal that temperature lags alone cannot see.
         req_url = (f"/v1/archive?latitude={lat}&longitude={lon}"
                    f"&start_date={start_date.strftime('%Y-%m-%d')}"
                    f"&end_date={end_date.strftime('%Y-%m-%d')}"
-                   f"&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_sum"
+                   f"&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_sum,"
+                   f"pressure_msl_mean,wind_speed_10m_max,relative_humidity_2m_mean,cloud_cover_mean"
                    f"&timezone=Europe%2FLondon")
         
-        conn.request("GET", req_url)
-        res = conn.getresponse()
-        data = json.loads(res.read().decode("utf-8"))
-        
+        # Long-range requests are "heavy" against the free tier's per-minute
+        # quota, so back off and retry when the API reports a rate limit.
+        for attempt in range(4):
+            conn = http.client.HTTPSConnection(hostname)
+            conn.request("GET", req_url)
+            res = conn.getresponse()
+            data = json.loads(res.read().decode("utf-8"))
+            if 'daily' in data:
+                break
+            reason = data.get('reason', 'unknown error')
+            if 'limit' in reason.lower() and attempt < 3:
+                LOGGER.warning(f"Rate limited for city {city_id} — retrying in 65s ({reason})")
+                time.sleep(65)
+            else:
+                raise ValueError(f"Open-Meteo error for city {city_id}: {reason}")
+
         df_city = pd.DataFrame(data['daily'])
         df_city["city"] = city_id
         raw_data = pd.concat([raw_data, df_city])
+        time.sleep(2)  # politeness gap between cities
 
     return raw_data.reset_index(drop=True), end_date
 

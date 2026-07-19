@@ -9,7 +9,7 @@ a closed-loop retraining system with champion/challenger promotion and rollback.
 |---|---|
 | `Dockerfile.airflow` | Airflow base + the app's runtime deps (`../requirements-pipeline.txt`). |
 | `docker-compose.airflow.yml` | Postgres + LocalExecutor Airflow; mounts the repo at `/opt/airflow/project`. |
-| `dags/weather_retrain_dag.py` | Retrain + gated promotion (manual trigger for now; set `schedule="0 2 * * *"` once verified). |
+| `dags/weather_retrain_dag.py` | Retrain + gated promotion, weekly Sundays @ 02:00 (runs while the stack is up). |
 | `dags/weather_rollback_dag.py` | Manual rollback to `last_known_good`. |
 | `.env.example` | Env the compose needs — copy to `.env`. |
 
@@ -21,10 +21,9 @@ cp airflow/.env.example airflow/.env      # fill in DagsHub creds + AIRFLOW_UID 
 docker compose -f airflow/docker-compose.airflow.yml up -d
 ```
 
-Open http://localhost:8080 (login `airflow` / `airflow`). Both DAGs are
-manual-trigger while the stack is being verified — trigger `weather_retrain`
-from the UI. Once an end-to-end run is green, restore the nightly schedule in
-`weather_retrain_dag.py` (`schedule="0 2 * * *"`).
+Open http://localhost:8080 (login `airflow` / `airflow`). `weather_retrain`
+runs weekly (Sundays 02:00) while the stack is up (unpause it in the UI); it
+can also be triggered manually any time. `weather_rollback` is manual-only.
 
 Stop / reset:
 
@@ -51,7 +50,7 @@ ingest -> preprocess -> feature_engineering -> dvc_push -> train_challenger -> e
   a new version and sets `@challenger`.
 - **evaluate_gate** — scores `@challenger` (and `@champion`, if any) on
   `data/processed/holdout_encoded.csv`. Promotes **only if**
-  `challenger MAE <= 3.0` **and** (`no champion` **or** `challenger MAE <= champion MAE`).
+  `challenger MAE <= 4.0` **and** (`no champion` **or** `challenger MAE <= champion MAE`).
 - **promote_champion** — records the outgoing champion version as the
   registered-model tag `last_known_good`, then re-points `@champion` to the
   challenger.

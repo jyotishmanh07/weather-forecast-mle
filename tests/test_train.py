@@ -26,13 +26,20 @@ def _synthetic_encoded(n_rows: int, start: str, seed: int) -> pd.DataFrame:
         "precipitation_sum": np.where(
             rng.random(n_rows) < 0.2, np.nan, rng.uniform(0, 10, n_rows).round(1)
         ),
-        "month-day": dates.strftime("%m.%d").astype(float),
+        "season_sin": np.sin(2 * np.pi * dates.dayofyear / 365.25),
+        "season_cos": np.cos(2 * np.pi * dates.dayofyear / 365.25),
+        "pressure_msl_mean": rng.uniform(990, 1035, n_rows).round(1),
+        "wind_speed_10m_max": rng.uniform(5, 60, n_rows).round(1),
+        "relative_humidity_2m_mean": rng.uniform(30, 100, n_rows).round(0),
+        "cloud_cover_mean": rng.uniform(0, 100, n_rows).round(0),
+        "pressure_change_1d": rng.normal(0, 5, n_rows).round(1),
         "lag_temp_1d": np.roll(temp, 1).round(1),
         "lag_temp_3d": np.roll(temp, 3).round(1),
         "lag_temp_7d": np.roll(temp, 7).round(1),
         "rolling_temp_7d_mean": pd.Series(temp).rolling(7, min_periods=1).mean().round(1),
         "rolling_temp_7d_std": pd.Series(temp).rolling(7, min_periods=1).std().fillna(0).round(1),
-        # next-day target: tomorrow's max, i.e. temp shifted back one day
+        # forecast horizon feature (1-3 days ahead) + the future max target
+        "horizon": rng.choice([1, 2, 3], n_rows),
         "target_temp_max": np.roll(temp, -1).round(1),
         "city_1": 1, "city_2": 0, "city_3": 0, "city_4": 0, "city_5": 0,
     })

@@ -18,7 +18,7 @@ LOGGER = logging.getLogger(__name__)
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
-_VALID_WMO_CODES = {0, 1, 2, 3, 45, 51, 53, 55, 61, 63, 65, 71, 73, 75, 80, 81, 82, 95, 96, 99}
+_VALID_WMO_CODES = {0, 1, 2, 3, 45, 48, 51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 71, 73, 75, 77, 80, 81, 82, 85, 86, 95, 96, 99}
 
 
 class WeatherInput(BaseModel):
@@ -28,9 +28,13 @@ class WeatherInput(BaseModel):
     temperature_2m_min: float = Field(..., ge=-30.0, le=45.0, description="Daily min temperature (°C)")
     temperature_2m_max: float = Field(
         ..., ge=-30.0, le=45.0,
-        description="Today's observed max temperature (°C). A feature for the next-day forecast."
+        description="Today's observed max temperature (°C). A feature for the 3-day forecast."
     )
-    precipitation_sum: float = Field(..., ge=0.0, le=60.0, description="Daily precipitation (mm)")
+    precipitation_sum: float = Field(..., ge=0.0, le=200.0, description="Daily precipitation (mm)")
+    pressure_msl_mean: float = Field(..., ge=940.0, le=1080.0, description="Mean sea-level pressure (hPa)")
+    wind_speed_10m_max: float = Field(..., ge=0.0, le=250.0, description="Daily max wind speed (km/h)")
+    relative_humidity_2m_mean: float = Field(..., ge=0.0, le=100.0, description="Mean relative humidity (%)")
+    cloud_cover_mean: float = Field(..., ge=0.0, le=100.0, description="Mean cloud cover (%)")
 
     @field_validator("weathercode")
     @classmethod
@@ -49,8 +53,10 @@ class WeatherInput(BaseModel):
 
 
 class PredictionResponse(BaseModel):
+    """3-day forecast: one entry per (input row, horizon) — horizon = days ahead."""
     city: List[int]
     time: List[str]
+    horizon: List[int]
     forecast_date: List[str]
     predicted_max_temp: List[float]
     model_version: str
@@ -76,7 +82,7 @@ app = FastAPI(title="Weather Forecast ML API")
 Instrumentator().instrument(app).expose(app)
 PREDICTIONS_TOTAL = Counter("predictions_total", "Predictions served", ["model_version"])
 PREDICTED_TEMP = Summary(
-    "predicted_temp_max_celsius", "Distribution of predicted next-day max temperature"
+    "predicted_temp_max_celsius", "Distribution of predicted max temperature"
 )
 
 
@@ -118,6 +124,7 @@ def predict_weather(data: List[WeatherInput]):
         return PredictionResponse(
             city=preds_df["city"].tolist() if "city" in preds_df.columns else [],
             time=preds_df["time"].astype(str).tolist(),
+            horizon=preds_df["horizon"].astype(int).tolist(),
             forecast_date=preds_df["forecast_date"].astype(str).tolist(),
             predicted_max_temp=preds,
             model_version=_model_version or "unknown",
