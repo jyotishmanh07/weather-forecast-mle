@@ -44,8 +44,9 @@ ingest -> preprocess -> feature_engineering -> dvc_push -> train_challenger -> e
 
 - **ingest / preprocess / feature_engineering** — the existing
   `python -m pipelines.feature_pipeline.*` entrypoints (BashOperator, cwd = repo).
-- **dvc_push** — versions the fresh data snapshot; logs-and-continues if no DVC
-  remote is configured yet.
+- **dvc_push** — `dvc add data/raw data/processed` + `dvc push`: versions the
+  fresh snapshot and uploads it; commit the updated `.dvc` pointers to git to
+  pin it. Logs-and-continues if no DVC remote is configured yet.
 - **train_challenger** — `python -m pipelines.training_pipeline.tune`; registers
   a new version and sets `@challenger`.
 - **evaluate_gate** — scores `@challenger` (and `@champion`, if any) on

@@ -383,8 +383,9 @@ container (`docker compose restart api`) so it reloads the reverted champion.
 ## Data versioning (DVC)
 
 `data/raw` and `data/processed` are tracked with DVC and stored on the DagsHub
-remote, not in git. `dvc pull` fetches them; the retrain DAG runs `dvc push`
-after each ingest, so every run's data snapshot is reproducible and reversible.
+remote, not in git. `dvc pull` fetches them; the retrain DAG runs
+`dvc add` + `dvc push` after each ingest, so every run's data snapshot is
+reproducible and reversible (commit the updated `.dvc` pointers to pin it).
 Credentials live in the gitignored `.dvc/config.local`.
 
 ---

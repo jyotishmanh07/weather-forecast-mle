@@ -212,14 +212,16 @@ with DAG(
         append_env=True,
     )
 
-    # Version the fresh data snapshot. No-op-and-continue if no DVC remote is
-    # configured yet (Workstream 4 wires the DagsHub remote).
+    # Version the fresh data snapshot: `dvc add` updates the .dvc pointers to
+    # the just-ingested data, `dvc push` uploads it. The updated pointer files
+    # land in the mounted repo's working tree — commit them to git to pin this
+    # snapshot. Logs-and-continues if no DVC remote is configured yet.
     dvc_push = BashOperator(
         task_id="dvc_push",
         bash_command=(
             f"cd {PROJECT_DIR} && "
-            "(dvc push && echo 'dvc push complete') || "
-            "echo 'dvc push skipped (no remote configured) — continuing'"
+            "(dvc add data/raw data/processed && dvc push && echo 'dvc snapshot pushed') || "
+            "echo 'dvc snapshot skipped (no remote configured) — continuing'"
         ),
         env=bash_env,
         append_env=True,
